@@ -244,6 +244,9 @@ class VoiceRecorder {
             // Calculate recording duration
             const duration = Date.now() - recordingSession.startTime;
             
+            // Wait briefly for final speaking events to be processed
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
             // Clean up event handlers
             this.cleanupSpeakingEvents(guildId);
             this.cleanupVoiceStateHandler(recordingSession);

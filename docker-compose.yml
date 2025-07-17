@@ -1,11 +1,11 @@
 services:
   soundscribe:
     build: .
-    container_name: soundscribe-local
+    container_name: soundscribe
     restart: unless-stopped
     user: "1000:1000"
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - DISCORD_BOT_TOKEN=${DISCORD_TOKEN}
       - GROQ_API_KEY=${GROQ_API_KEY}
@@ -13,7 +13,6 @@ services:
       - BASE_URL=${BASE_URL}
       - WEB_PORT=${WEB_PORT}
       - WEB_HOST=0.0.0.0
-      - WEB_ONLY_MODE=${WEB_ONLY_MODE:-false}
     volumes:
       - ./recordings:/app/recordings:Z
       - ./temp:/app/temp:Z
@@ -26,22 +25,21 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    container_name: soundscribe-caddy-local
+    container_name: soundscribe-caddy
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./recordings:/var/www/recordings:ro
-      - caddy_data_local:/data
-      - caddy_config_local:/config
+      - caddy_data:/data
+      - caddy_config:/config
     environment:
-      - DOMAIN=soundscribe.local
+      - DOMAIN=${DOMAIN}
     networks:
       - soundscribe-network
     command: |
-      sh -c 'echo "soundscribe.local {
-        tls internal
+      sh -c 'echo "${DOMAIN} {
         reverse_proxy soundscribe:3000
         handle /recordings/* {
           root * /var/www
@@ -57,8 +55,8 @@ services:
       }" > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
 
 volumes:
-  caddy_data_local:
-  caddy_config_local:
+  caddy_data:
+  caddy_config:
 
 networks:
   soundscribe-network:

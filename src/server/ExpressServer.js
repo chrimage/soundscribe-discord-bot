@@ -37,6 +37,23 @@ class ExpressServer {
             });
         });
 
+        // Test endpoint for Docker deployment verification
+        this.app.get('/test', (req, res) => {
+            res.json({
+                message: '🎉 SoundScribe Docker deployment is working!',
+                timestamp: new Date().toISOString(),
+                version: '1.0.0',
+                environment: process.env.NODE_ENV || 'development',
+                availableEndpoints: [
+                    'GET /health - Health check',
+                    'GET /test - This test endpoint',
+                    'GET /recordings - List recordings',
+                    'GET /stats - Server statistics',
+                    'GET / - React frontend application'
+                ]
+            });
+        });
+
         // API endpoint to get transcript data
         this.app.get('/api/transcript/:id', (req, res) => {
             const transcriptId = req.params.id;

@@ -91,11 +91,23 @@ class FileManager {
                 const tempFiles = fs.readdirSync(this.tempDir);
                 for (const file of tempFiles) {
                     const filePath = path.join(this.tempDir, file);
-                    const stats = fs.statSync(filePath);
-                    if (now - stats.birthtime.getTime() > maxAge) {
-                        fs.unlinkSync(filePath);
-                        logger.info(`Deleted old temp file: ${file}`);
-                        deletedCount++;
+                    try {
+                        const stats = fs.statSync(filePath);
+                        if (now - stats.birthtime.getTime() > maxAge) {
+                            if (stats.isDirectory()) {
+                                // Recursively delete directory and its contents
+                                fs.rmSync(filePath, { recursive: true, force: true });
+                                logger.info(`Deleted old temp directory: ${file}`);
+                            } else {
+                                // Delete file
+                                fs.unlinkSync(filePath);
+                                logger.info(`Deleted old temp file: ${file}`);
+                            }
+                            deletedCount++;
+                        }
+                    } catch (error) {
+                        logger.error(`Error deleting temp item ${file}:`, error);
+                        // Continue with other files
                     }
                 }
             }
