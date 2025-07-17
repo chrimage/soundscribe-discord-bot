@@ -1,0 +1,65 @@
+services:
+  soundscribe:
+    build: .
+    container_name: soundscribe-local
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      - NODE_ENV=development
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DOMAIN=${DOMAIN}
+      - BASE_URL=${BASE_URL}
+      - WEB_PORT=${WEB_PORT}
+      - WEB_HOST=0.0.0.0
+      - WEB_ONLY_MODE=${WEB_ONLY_MODE:-false}
+    volumes:
+      - ./recordings:/app/recordings:Z
+      - ./temp:/app/temp:Z
+    ports:
+      - "3000:3000"
+    networks:
+      - soundscribe-network
+    depends_on:
+      - caddy
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: soundscribe-caddy-local
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./recordings:/var/www/recordings:ro
+      - caddy_data_local:/data
+      - caddy_config_local:/config
+    environment:
+      - DOMAIN=soundscribe.local
+    networks:
+      - soundscribe-network
+    command: |
+      sh -c 'echo "soundscribe.local {
+        tls internal
+        reverse_proxy soundscribe:3000
+        handle /recordings/* {
+          root * /var/www
+          file_server
+        }
+        header {
+          Strict-Transport-Security \"max-age=31536000; includeSubDomains\"
+          X-Content-Type-Options \"nosniff\"
+          X-Frame-Options \"DENY\"
+          X-XSS-Protection \"1; mode=block\"
+          Referrer-Policy \"strict-origin-when-cross-origin\"
+        }
+      }" > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+
+volumes:
+  caddy_data_local:
+  caddy_config_local:
+
+networks:
+  soundscribe-network:
+    driver: bridge
