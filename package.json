@@ -18,11 +18,16 @@
     "bot",
     "voice",
     "recording",
-    "audio"
+    "audio",
+    "transcription",
+    "ai",
+    "speech-to-text",
+    "react",
+    "docker"
   ],
   "author": "",
   "license": "ISC",
-  "description": "Discord voice channel recording bot with secure audio download",
+  "description": "Discord voice channel recording bot with AI transcription and web interface",
   "dependencies": {
     "@babel/core": "^7.28.0",
     "@babel/preset-react": "^7.27.1",

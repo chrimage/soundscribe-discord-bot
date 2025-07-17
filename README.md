@@ -1,15 +1,44 @@
-# SoundScribe - Discord Voice Recording Bot
+# SoundScribe - Discord Voice Recording & Transcription Bot
 
-A Discord bot that records voice channels and provides downloadable MP3 files. Built for reliability and simplicity.
+A Discord bot that records voice channels, provides downloadable MP3 files, and generates AI-powered transcripts with a web interface. Built for reliability and simplicity.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 18+
-- FFmpeg
+- Node.js 18+ (for local development)
+- Docker & Docker Compose (recommended for deployment)
+- FFmpeg (included in Docker image)
 - Discord bot token
+- Groq API key (for AI transcription)
 
-### Installation
+### Quick Start with Docker (Recommended)
+
+1. **Clone and configure:**
+   ```bash
+   git clone <repository-url>
+   cd soundscribe-js
+   cp .env.example .env
+   ```
+
+2. **Configure environment variables in .env:**
+   ```bash
+   DISCORD_TOKEN=your_discord_bot_token_here
+   GROQ_API_KEY=your_groq_api_key_here
+   DOMAIN=yourdomain.com  # For production with HTTPS
+   BASE_URL=https://yourdomain.com  # Or http://localhost:3000 for local
+   WEB_PORT=3000
+   ```
+
+3. **Start with Docker:**
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **Access the web interface:**
+   - Local: `http://localhost:3000`
+   - Production: `https://yourdomain.com`
+
+### Local Development Setup
 
 1. **Clone and install dependencies:**
    ```bash
@@ -24,7 +53,7 @@ A Discord bot that records voice channels and provides downloadable MP3 files. B
 3. **Configure environment:**
    ```bash
    cp .env.example .env
-   # Edit .env with your Discord bot token
+   # Edit .env with your Discord bot token and Groq API key
    ```
 
 4. **Start the bot:**
@@ -49,15 +78,22 @@ A Discord bot that records voice channels and provides downloadable MP3 files. B
 3. **Environment variables:**
    ```bash
    DISCORD_BOT_TOKEN=your_bot_token_here
+   GROQ_API_KEY=your_groq_api_key_here
    EXPRESS_PORT=3000
+   BASE_URL=http://localhost:3000
    ```
 
-4. **Start the bot:**
+4. **Get Groq API Key:**
+   - Go to [Groq Console](https://console.groq.com/)
+   - Create account and generate API key
+   - This enables AI-powered transcription features
+
+5. **Start the bot:**
    ```bash
    npm start
    ```
    
-5. **Invite the bot:**
+6. **Invite the bot:**
    - Copy the invite link from the console output
    - Paste it in your browser to add the bot to your server
 
@@ -65,16 +101,40 @@ A Discord bot that records voice channels and provides downloadable MP3 files. B
 
 ### Commands
 - `/join` - Join your voice channel and start recording
-- `/stop` - Stop recording and get download link
+- `/stop` - Stop recording, get download link, and automatically generate transcript
 - `/last_recording` - Get link to your most recent recording
+- `/transcribe` - Manually generate transcript from the last recording
 - `/ping` - Test bot responsiveness
 
 ### Example Workflow
 1. Join a voice channel
 2. Type `/join` to start recording
 3. Have your conversation
-4. Type `/stop` to finish and get download link
-5. Click the download link to save your MP3 file
+4. Type `/stop` to finish recording
+5. Bot provides:
+   - Download link for MP3 file
+   - Web interface link to view AI-generated transcript
+6. Access transcript viewer for formatted, searchable transcripts with download/copy options
+
+## 🌐 Web Interface
+
+### Transcript Viewer Features
+- **Formatted transcripts** with markdown rendering
+- **Speaker identification** with timestamps
+- **Confidence scores** for transcription quality
+- **Download** transcripts as markdown files
+- **Copy to clipboard** functionality
+- **Responsive design** for mobile and desktop
+
+### Accessing Transcripts
+- Automatic links provided after `/stop` command
+- Direct URL format: `https://yourdomain.com/?id=recording_id`
+- Built-in React application with modern UI
+
+### API Endpoints
+- `GET /api/transcript/{id}` - Fetch transcript data
+- `GET /recordings/` - List available recordings
+- `GET /health` - Health check endpoint
 
 ## 🔧 Technical Details
 
@@ -82,7 +142,10 @@ A Discord bot that records voice channels and provides downloadable MP3 files. B
 - **Discord.js** - Discord API integration
 - **@discordjs/voice** - Voice connection handling
 - **FFmpeg** - Audio processing and MP3 conversion
-- **Express.js** - File serving and download endpoints
+- **Express.js** - File serving and API endpoints
+- **React** - Web interface for transcript viewing
+- **Groq API** - AI-powered speech transcription with Whisper
+- **Docker + Caddy** - Production deployment with HTTPS and reverse proxy
 
 ### Performance
 - **Memory usage**: < 512MB for 60-minute recordings
@@ -100,17 +163,23 @@ A Discord bot that records voice channels and provides downloadable MP3 files. B
 
 ### Project Structure
 ```
-soundscribe/
+soundscribe-js/
 ├── src/
 │   ├── audio/           # Voice recording and processing
 │   ├── bot/            # Discord bot commands
-│   ├── server/         # Express file server
+│   ├── frontend/       # React web interface
+│   ├── server/         # Express API server
+│   ├── services/       # Transcription service (Groq API)
 │   ├── utils/          # Utilities and helpers
 │   └── config.js       # Configuration
+├── public/             # Built frontend assets
 ├── scripts/            # Setup and validation
-├── recordings/         # Audio files
-├── temp/              # Temporary files
-└── docs/              # Documentation
+├── recordings/         # Audio files and transcripts
+├── temp/               # Temporary files
+├── docs/               # Documentation
+├── Dockerfile          # Docker container config
+├── docker-compose.yml  # Multi-container setup
+└── webpack.config.js   # Frontend build config
 ```
 
 ### Testing
@@ -132,6 +201,45 @@ npm run validate
 npm run dev  # Auto-restart on file changes
 ```
 
+## 🚀 Production Deployment
+
+### Docker Production Setup
+1. **Configure domain and SSL:**
+   ```bash
+   # Update .env for production
+   DOMAIN=yourdomain.com
+   BASE_URL=https://yourdomain.com
+   DISCORD_TOKEN=your_production_token
+   GROQ_API_KEY=your_groq_key
+   ```
+
+2. **Deploy with Docker Compose:**
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Features included:**
+   - Automatic HTTPS with Let's Encrypt (via Caddy)
+   - Reverse proxy with security headers
+   - Container isolation and restart policies
+   - Volume persistence for recordings
+
+### Environment Variables
+```bash
+# Required
+DISCORD_TOKEN=your_discord_bot_token
+GROQ_API_KEY=your_groq_api_key
+
+# Production
+DOMAIN=yourdomain.com
+BASE_URL=https://yourdomain.com
+NODE_ENV=production
+
+# Optional
+WEB_PORT=3000
+WEB_HOST=0.0.0.0
+```
+
 ## 🔍 Troubleshooting
 
 ### Common Issues
@@ -145,6 +253,16 @@ npm run dev  # Auto-restart on file changes
 - Ensure FFmpeg is installed and in PATH
 - Set FFMPEG_PATH in .env if needed
 - Check file permissions
+
+**Transcription issues:**
+- Verify Groq API key in .env
+- Check Groq API quota and usage
+- Ensure audio quality is sufficient
+
+**Web interface not loading:**
+- Check BASE_URL in environment variables
+- Verify webpack build completed (npm run build)
+- Check browser console for errors
 
 **Memory issues:**
 - Monitor with `/stats` endpoint
@@ -160,13 +278,22 @@ npm run dev  # Auto-restart on file changes
 - Check health: `curl http://localhost:3000/health`
 - View stats: `curl http://localhost:3000/stats`
 - List recordings: `curl http://localhost:3000/recordings`
+- Get transcript: `curl http://localhost:3000/api/transcript/{recording_id}`
+- Test web interface: Open `http://localhost:3000/?id={recording_id}`
 
 ## 🛡️ Security
 
 - Files served only from designated directory
 - No directory traversal vulnerabilities
-- Basic security headers implemented
+- Comprehensive security headers via Caddy reverse proxy:
+  - Strict-Transport-Security (HSTS)
+  - X-Content-Type-Options
+  - X-Frame-Options
+  - X-XSS-Protection
+  - Referrer-Policy
 - Files auto-deleted after 24 hours
+- Container isolation in production
+- Automatic HTTPS with Let's Encrypt
 - No authentication required for MVP (post-MVP enhancement)
 
 ## 📈 Monitoring
@@ -177,15 +304,24 @@ npm run dev  # Auto-restart on file changes
 - Error logging with timestamps
 - Automatic cleanup logging
 
-## 🔄 Post-MVP Features
+## 🔄 Implemented Features
 
-- Individual participant recording
-- JWT-based authentication
-- Multi-guild support
-- Advanced error recovery
-- Production deployment guides
-- Performance optimization
-- Enhanced security features
+- ✅ AI-powered transcription with Groq API
+- ✅ React web interface for transcript viewing
+- ✅ Docker deployment with HTTPS
+- ✅ Automatic speech recognition with confidence scoring
+- ✅ Speaker identification and timestamp tracking
+
+## 🔄 Planned Enhancements
+
+- Individual participant recording (multi-track)
+- JWT-based authentication for secure access
+- Multi-guild support with isolated recordings
+- Enhanced speaker diarization
+- Real-time transcription streaming
+- Advanced audio processing and noise reduction
+- Transcript search and indexing
+- Integration with cloud storage providers
 
 ## 🤝 Contributing
 
