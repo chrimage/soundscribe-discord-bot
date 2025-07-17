@@ -2,7 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const FormData = require('form-data');
 const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
 const logger = require('../utils/logger');
+const { TRANSCRIPTION, ERROR_MESSAGES } = require('../constants');
 
 class TranscriptionService {
     constructor() {
@@ -16,7 +18,7 @@ class TranscriptionService {
 
     async transcribeSegments(speechSegments) {
         if (!this.groqApiKey) {
-            throw new Error('Groq API key not configured');
+            throw new Error(ERROR_MESSAGES.TRANSCRIPTION.API_KEY_MISSING);
         }
 
         const transcriptionResults = [];
@@ -30,37 +32,37 @@ class TranscriptionService {
                 // Convert PCM to WAV for Groq API
                 const wavFile = await this.convertPcmToWav(segment.filename);
                 
-                // Check file size (Groq has 100MB limit)
+                // Check file size (Groq API limit)
                 const fileStats = fs.statSync(wavFile);
-                if (fileStats.size > 100 * 1024 * 1024) {
+                if (fileStats.size > TRANSCRIPTION.MAX_FILE_SIZE_BYTES) {
                     logger.warn(`Segment ${segment.segmentId} too large (${fileStats.size} bytes), skipping`);
                     transcriptionResults.push({
                         ...segment,
                         transcription: '[Audio segment too large for transcription]',
-                        error: 'File size exceeds API limit'
+                        error: ERROR_MESSAGES.TRANSCRIPTION.FILE_TOO_LARGE
                     });
                     continue;
                 }
 
-                // Skip very small files (likely silence) - increased threshold
-                if (fileStats.size < 10000) {  // Increased from 1000 to 10000 bytes
+                // Skip very small files (likely silence)
+                if (fileStats.size < TRANSCRIPTION.MIN_FILE_SIZE_BYTES) {
                     logger.debug(`Segment ${segment.segmentId} too small (${fileStats.size} bytes), skipping`);
                     transcriptionResults.push({
                         ...segment,
                         transcription: '[Audio segment too small]',
-                        error: 'File too small - likely silence or background noise'
+                        error: ERROR_MESSAGES.TRANSCRIPTION.FILE_TOO_SMALL
                     });
                     continue;
                 }
 
                 // Additional quality check: analyze audio energy before conversion
                 const audioQuality = await this.analyzeAudioQuality(segment.filename);
-                if (audioQuality.avgEnergy < 0.01) {  // Very low energy = likely silence
+                if (audioQuality.avgEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY) {
                     logger.debug(`Segment ${segment.segmentId} has very low audio energy (${audioQuality.avgEnergy}), skipping`);
                     transcriptionResults.push({
                         ...segment,
                         transcription: '[Low audio energy detected]',
-                        error: 'Audio energy too low - likely silence'
+                        error: ERROR_MESSAGES.TRANSCRIPTION.LOW_AUDIO_ENERGY
                     });
                     continue;
                 }
@@ -101,9 +103,9 @@ class TranscriptionService {
 
         const formData = new FormData();
         formData.append('file', fs.createReadStream(audioFilePath));
-        formData.append('model', 'whisper-large-v3-turbo'); // Fast model for real-time feel
-        formData.append('language', 'en'); // Can be made configurable
-        formData.append('response_format', 'verbose_json'); // Get confidence scores
+        formData.append('model', TRANSCRIPTION.DEFAULT_MODEL);
+        formData.append('language', TRANSCRIPTION.DEFAULT_LANGUAGE);
+        formData.append('response_format', TRANSCRIPTION.RESPONSE_FORMAT);
 
         try {
             const response = await axios.post(`${this.groqBaseUrl}/audio/transcriptions`, formData, {
@@ -111,7 +113,7 @@ class TranscriptionService {
                     'Authorization': `Bearer ${this.groqApiKey}`,
                     ...formData.getHeaders()
                 },
-                timeout: 30000 // 30 second timeout
+                timeout: TRANSCRIPTION.API_TIMEOUT_MS
             });
 
             return {
@@ -123,11 +125,11 @@ class TranscriptionService {
         } catch (error) {
             if (error.response) {
                 logger.error(`Groq API error: ${error.response.status} - ${error.response.data?.error?.message || 'Unknown error'}`);
-                throw new Error(`Transcription API error: ${error.response.status}`);
+                throw new Error(`${ERROR_MESSAGES.TRANSCRIPTION.API_ERROR}: ${error.response.status}`);
             } else if (error.code === 'ECONNABORTED') {
-                throw new Error('Transcription request timed out');
+                throw new Error(ERROR_MESSAGES.TRANSCRIPTION.API_TIMEOUT);
             } else {
-                throw new Error(`Network error: ${error.message}`);
+                throw new Error(`${ERROR_MESSAGES.TRANSCRIPTION.NETWORK_ERROR}: ${error.message}`);
             }
         }
     }
@@ -150,7 +152,6 @@ class TranscriptionService {
     }
 
     async convertPcmToWav(pcmFilePath) {
-        const ffmpeg = require('fluent-ffmpeg');
         const wavFilePath = pcmFilePath.replace('.pcm', '.wav');
 
         return new Promise((resolve, reject) => {
@@ -173,7 +174,7 @@ class TranscriptionService {
                 })
                 .on('error', (err) => {
                     logger.error(`FFmpeg error converting ${pcmFilePath}:`, err);
-                    reject(err);
+                    reject(new Error(`${ERROR_MESSAGES.TRANSCRIPTION.CONVERSION_FAILED}: ${err.message}`));
                 })
                 .save(wavFilePath);
         });
@@ -261,44 +262,60 @@ class TranscriptionService {
     }
 
     async analyzeAudioQuality(pcmFilePath) {
-        const fs = require('fs');
-        
         try {
-            // Read PCM file and calculate RMS energy
+            // Check if file exists and is readable
+            if (!fs.existsSync(pcmFilePath)) {
+                throw new Error(`Audio file not found: ${pcmFilePath}`);
+            }
+
+            const stats = fs.statSync(pcmFilePath);
+            if (stats.size === 0) {
+                return {
+                    avgEnergy: 0,
+                    peakAmplitude: 0,
+                    sampleCount: 0,
+                    isLikelySilence: true
+                };
+            }
+
+            // Read PCM file in chunks to avoid memory issues with large files
             const buffer = fs.readFileSync(pcmFilePath);
+            const maxSamplesToAnalyze = 48000; // Analyze max 1 second of audio
+            const bytesToRead = Math.min(buffer.length, maxSamplesToAnalyze * 2);
             
             // PCM is 16-bit signed little endian, 2 channels (stereo)
-            const samples = [];
-            for (let i = 0; i < buffer.length - 1; i += 2) {
-                const sample = buffer.readInt16LE(i);
-                samples.push(sample / 32768.0); // Normalize to -1.0 to 1.0
-            }
-            
-            // Calculate RMS (Root Mean Square) energy
             let sumSquares = 0;
-            for (const sample of samples) {
+            let maxAmplitude = 0;
+            let sampleCount = 0;
+            
+            for (let i = 0; i < bytesToRead - 1; i += 2) {
+                const sample = buffer.readInt16LE(i) / 32768.0; // Normalize to -1.0 to 1.0
+                const amplitude = Math.abs(sample);
+                
                 sumSquares += sample * sample;
+                maxAmplitude = Math.max(maxAmplitude, amplitude);
+                sampleCount++;
             }
-            const rmsEnergy = Math.sqrt(sumSquares / samples.length);
             
-            // Calculate peak amplitude
-            const peakAmplitude = Math.max(...samples.map(Math.abs));
+            const rmsEnergy = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+            const isLikelySilence = rmsEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY && 
+                                   maxAmplitude < TRANSCRIPTION.MIN_PEAK_AMPLITUDE;
             
-            logger.debug(`Audio quality: RMS=${rmsEnergy.toFixed(4)}, Peak=${peakAmplitude.toFixed(4)}, Samples=${samples.length}`);
+            logger.debug(`Audio quality analysis: RMS=${rmsEnergy.toFixed(4)}, Peak=${maxAmplitude.toFixed(4)}, Samples=${sampleCount}, Silence=${isLikelySilence}`);
             
             return {
                 avgEnergy: rmsEnergy,
-                peakAmplitude: peakAmplitude,
-                sampleCount: samples.length,
-                isLikelySilence: rmsEnergy < 0.01 && peakAmplitude < 0.05
+                peakAmplitude: maxAmplitude,
+                sampleCount,
+                isLikelySilence
             };
             
         } catch (error) {
             logger.error(`Failed to analyze audio quality for ${pcmFilePath}:`, error);
-            // Return permissive values on error so we don't skip valid audio
+            // Return permissive values on error so we don't skip potentially valid audio
             return {
-                avgEnergy: 1.0,
-                peakAmplitude: 1.0,
+                avgEnergy: TRANSCRIPTION.MIN_AUDIO_ENERGY + 0.01, // Just above threshold
+                peakAmplitude: TRANSCRIPTION.MIN_PEAK_AMPLITUDE + 0.01,
                 sampleCount: 0,
                 isLikelySilence: false
             };

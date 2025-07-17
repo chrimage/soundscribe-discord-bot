@@ -6,6 +6,7 @@ const voiceRecorder = require('../audio/VoiceRecorder');
 const audioProcessor = require('../audio/AudioProcessor');
 const fileManager = require('../utils/fileManager');
 const transcriptionService = require('../services/TranscriptionService');
+const { COMMANDS, ERROR_MESSAGES, SUCCESS_MESSAGES } = require('../constants');
 
 class CommandHandler {
     constructor(client, expressServer) {
@@ -126,7 +127,7 @@ class CommandHandler {
             }
 
             await interaction.editReply({
-                content: '⏳ Processing audio... This may take a moment.'
+                content: SUCCESS_MESSAGES.PROCESSING_AUDIO
             });
 
             // Process the recording segments (but don't clean up temp files yet if we have speech segments)
@@ -149,7 +150,7 @@ class CommandHandler {
 
                 // Update user about transcription starting
                 await interaction.editReply({
-                    content: '⏳ Processing audio and generating transcript... This may take a few moments.'
+                    content: `${SUCCESS_MESSAGES.PROCESSING_AUDIO} ${SUCCESS_MESSAGES.GENERATING_TRANSCRIPT}`
                 });
 
                 try {

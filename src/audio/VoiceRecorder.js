@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
+const { RECORDING, ERROR_MESSAGES, SUCCESS_MESSAGES } = require('../constants');
 
 class VoiceRecorder {
     constructor() {
@@ -21,12 +22,12 @@ class VoiceRecorder {
         const guildId = interaction.guild.id;
         
         if (this.activeRecordings.has(guildId)) {
-            throw new Error('A recording is already in progress in this server');
+            throw new Error(ERROR_MESSAGES.RECORDING.ALREADY_RECORDING);
         }
 
         const member = interaction.member;
         if (!member.voice.channel) {
-            throw new Error('You must be in a voice channel to start recording');
+            throw new Error(ERROR_MESSAGES.RECORDING.NOT_IN_VOICE);
         }
 
         const voiceChannel = member.voice.channel;
@@ -96,46 +97,49 @@ class VoiceRecorder {
 
             // Handle users joining/leaving during recording
             if (this.client) {
-                this.client.on('voiceStateUpdate', (oldState, newState) => {
-                if (this.activeRecordings.has(guildId)) {
-                    const recordingSession = this.activeRecordings.get(guildId);
-                    
-                    // User joined the recording channel
-                    if (newState.channelId === voiceChannel.id && !newState.member.user.bot) {
-                        const userId = newState.member.id;
-                        const username = newState.member.user.username;
+                const voiceStateHandler = (oldState, newState) => {
+                    if (this.activeRecordings.has(guildId)) {
+                        const recordingSession = this.activeRecordings.get(guildId);
                         
-                        if (!recordingSession.participants.has(userId)) {
-                            logger.info(`User ${username} joined recording`);
-                            recordingSession.participants.set(userId, {
-                                username: username,
-                                displayName: newState.member.displayName,
-                                joinTime: Date.now()
-                            });
+                        // User joined the recording channel
+                        if (newState.channelId === voiceChannel.id && !newState.member.user.bot) {
+                            const userId = newState.member.id;
+                            const username = newState.member.user.username;
                             
-                            // Set up recording for the new user
-                            this.setupUserStream(recordingSession, userId, username, voiceChannel);
+                            if (!recordingSession.participants.has(userId)) {
+                                logger.info(`User ${username} joined recording`);
+                                recordingSession.participants.set(userId, {
+                                    username: username,
+                                    displayName: newState.member.displayName,
+                                    joinTime: Date.now()
+                                });
+                                
+                                // Set up recording for the new user
+                                this.setupUserStream(recordingSession, userId, username, voiceChannel);
+                            }
                         }
-                    }
-                    
-                    // User left the recording channel
-                    if (oldState.channelId === voiceChannel.id && !oldState.member.user.bot) {
-                        const userId = oldState.member.id;
-                        const username = oldState.member.user.username;
                         
-                        if (recordingSession.participants.has(userId)) {
-                            logger.info(`User ${username} left recording`);
-                            recordingSession.participants.get(userId).leaveTime = Date.now();
+                        // User left the recording channel
+                        if (oldState.channelId === voiceChannel.id && !oldState.member.user.bot) {
+                            const userId = oldState.member.id;
+                            const username = oldState.member.user.username;
                             
-                            // End the user's stream
-                            const streamInfo = recordingSession.userStreams.get(userId);
-                            if (streamInfo && streamInfo.audioStream) {
-                                streamInfo.audioStream.destroy();
+                            if (recordingSession.participants.has(userId)) {
+                                logger.info(`User ${username} left recording`);
+                                recordingSession.participants.get(userId).leaveTime = Date.now();
+                                
+                                // End the user's stream
+                                const streamInfo = recordingSession.userStreams.get(userId);
+                                if (streamInfo && streamInfo.audioStream) {
+                                    streamInfo.audioStream.destroy();
+                                }
                             }
                         }
                     }
-                }
-                });
+                };
+                
+                this.client.on('voiceStateUpdate', voiceStateHandler);
+                recordingSession.voiceStateHandler = voiceStateHandler; // Store for cleanup
             }
 
             this.activeRecordings.set(guildId, recordingSession);
@@ -152,7 +156,7 @@ class VoiceRecorder {
     async stopRecording(guildId) {
         const recordingSession = this.activeRecordings.get(guildId);
         if (!recordingSession) {
-            throw new Error('No active recording found for this server');
+            throw new Error(ERROR_MESSAGES.RECORDING.NO_ACTIVE_RECORDING);
         }
 
         logger.info(`Stopping recording in guild ${guildId}`);
@@ -240,8 +244,9 @@ class VoiceRecorder {
             // Calculate recording duration
             const duration = Date.now() - recordingSession.startTime;
             
-            // Clean up speaking event handlers
+            // Clean up event handlers
             this.cleanupSpeakingEvents(guildId);
+            this.cleanupVoiceStateHandler(recordingSession);
             
             // Clean up session
             this.activeRecordings.delete(guildId);
@@ -310,11 +315,18 @@ class VoiceRecorder {
                     let audioDataReceived = false;
                     let totalDataReceived = 0;
 
-                    // Monitor audio stream for data
+                    // Monitor audio stream for data (throttled logging)
+                    let lastLogTime = 0;
                     audioStream.on('data', (chunk) => {
                         audioDataReceived = true;
                         totalDataReceived += chunk.length;
-                        logger.info(`Audio data received for ${username}: ${chunk.length} bytes (total: ${totalDataReceived})`);
+                        
+                        // Throttle logging to avoid spam
+                        const now = Date.now();
+                        if (now - lastLogTime > 1000) { // Log once per second max
+                            logger.debug(`Audio data received for ${username}: ${chunk.length} bytes (total: ${totalDataReceived})`);
+                            lastLogTime = now;
+                        }
                     });
 
                     // Monitor decoder for data
@@ -556,7 +568,7 @@ class VoiceRecorder {
         
         // Set a delay timer before actually ending the segment
         // This allows for brief pauses between words/sentences
-        const SEGMENT_END_DELAY = 3000; // 3 seconds delay (increased for better transcription)
+        const SEGMENT_END_DELAY = RECORDING.SEGMENT_END_DELAY_MS;
         
         const timer = setTimeout(() => {
             logger.debug(`Segment end timer expired for ${username} - ending segment`);
@@ -702,7 +714,7 @@ class VoiceRecorder {
             } catch (error) {
                 logger.error(`Failed to clean up short segment file:`, error);
             }
-            logger.debug(`Discarded short speech segment for ${segment.username}: ${segment.duration}ms`);
+            logger.debug(`Discarded short speech segment for ${segment.username}: ${segment.duration}ms (minimum: ${RECORDING.MIN_SEGMENT_DURATION_MS}ms)`);
         }
     }
 
@@ -712,6 +724,14 @@ class VoiceRecorder {
             // Note: Discord.js doesn't provide a clean way to remove specific handlers
             // The handlers will be cleaned up when the connection is destroyed
             this.speakingHandlers.delete(guildId);
+        }
+    }
+
+    cleanupVoiceStateHandler(recordingSession) {
+        // Remove voice state update handler to prevent memory leaks
+        if (this.client && recordingSession.voiceStateHandler) {
+            this.client.removeListener('voiceStateUpdate', recordingSession.voiceStateHandler);
+            logger.debug('Cleaned up voice state update handler');
         }
     }
 }
