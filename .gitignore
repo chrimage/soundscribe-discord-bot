@@ -74,3 +74,7 @@ validation-results.json
 # Temporary files
 *.tmp
 *.temp
+
+# Local Docker overrides
+docker-compose.override.yml
+docker-compose.local.yml
