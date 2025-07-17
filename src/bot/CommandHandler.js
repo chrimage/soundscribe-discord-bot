@@ -16,6 +16,12 @@ class CommandHandler {
         this.setupCommands();
     }
 
+    // Helper to create web viewer link for transcript
+    createTranscriptViewerLink(transcriptFilename) {
+        const recordingId = transcriptFilename.replace('transcript_', '').replace('.md', '');
+        return `${config.express.baseUrl}/?id=${recordingId}`;
+    }
+
     setupCommands() {
         this.commands.set('join', {
             data: new SlashCommandBuilder()
@@ -167,6 +173,9 @@ class CommandHandler {
                     transcriptUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
                     transcriptStats = transcript.metadata;
                     
+                    // Create web viewer link
+                    const webViewerUrl = this.createTranscriptViewerLink(transcriptFilename);
+                    
                     logger.info(`Auto-generated transcript with ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments`);
                     
                 } catch (error) {
@@ -206,7 +215,9 @@ class CommandHandler {
 
             // Add transcript info if available
             if (transcriptUrl && transcriptStats) {
-                responseContent += `📄 **Transcript Download:** ${transcriptUrl}\n` +
+                const recordingId = path.basename(recordingResult.outputFile, '.mp3');
+                const webViewerUrl = this.createTranscriptViewerLink(`transcript_${recordingId}.md`);
+                responseContent += `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${transcriptUrl})\n` +
                     `• Transcribed segments: ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments}\n` +
                     `• Participants: ${transcriptStats.participants.join(', ')}\n`;
             } else if (recordingResult.speechSegments && recordingResult.speechSegments.length > 0) {
@@ -336,8 +347,9 @@ class CommandHandler {
                         const transcriptPath = path.join(require('../config').paths.recordings, transcriptFilename);
                         fs.writeFileSync(transcriptPath, transcript.text);
 
-                        // Create download link
+                        // Create download link and web viewer link
                         const downloadUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
+                        const webViewerUrl = this.createTranscriptViewerLink(transcriptFilename);
 
                         await interaction.editReply({
                             content: `✅ **Transcription completed!**\n\n` +
@@ -346,7 +358,7 @@ class CommandHandler {
                                     `• Transcribed segments: ${transcript.metadata.transcribedSegments}\n` +
                                     `• Participants: ${transcript.metadata.participants.join(', ')}\n` +
                                     `• Duration: ${transcript.metadata.totalDuration}\n\n` +
-                                    `📄 **Download transcript:** ${downloadUrl}\n\n` +
+                                    `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${downloadUrl})\n\n` +
                                     `⚠️ Transcript files are automatically deleted after 24 hours.\n\n` +
                                     `💡 *Note: Used continuous recording mode (speech segmentation not working)*`
                         });
@@ -404,8 +416,9 @@ class CommandHandler {
             const transcriptPath = require('path').join(require('../config').paths.recordings, transcriptFilename);
             fs.writeFileSync(transcriptPath, transcript.text);
 
-            // Create download link
+            // Create download link and web viewer link
             const downloadUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
+            const webViewerUrl = this.createTranscriptViewerLink(transcriptFilename);
 
             await interaction.editReply({
                 content: `✅ **Transcription completed!**\n\n` +
@@ -414,7 +427,7 @@ class CommandHandler {
                         `• Transcribed segments: ${transcript.metadata.transcribedSegments}\n` +
                         `• Participants: ${transcript.metadata.participants.join(', ')}\n` +
                         `• Duration: ${transcript.metadata.totalDuration}\n\n` +
-                        `📄 **Download transcript:** ${downloadUrl}\n\n` +
+                        `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${downloadUrl})\n\n` +
                         `⚠️ Transcript files are automatically deleted after 24 hours.`
             });
 
