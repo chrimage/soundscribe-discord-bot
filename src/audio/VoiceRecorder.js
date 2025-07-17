@@ -10,6 +10,7 @@ class VoiceRecorder {
     constructor() {
         this.activeRecordings = new Map();
         this.client = null;
+        this.speakingHandlers = new Map(); // Track speaking event handlers per guild
     }
 
     setClient(client) {
@@ -48,6 +49,9 @@ class VoiceRecorder {
                 sessionId,
                 participants: new Map(), // Map of userId -> participant info
                 userStreams: new Map(), // Map of userId -> stream info
+                speechSegments: [], // Array of speech segment metadata
+                currentSpeechSegments: new Map(), // Map of userId -> current active segment
+                segmentEndTimers: new Map(), // Map of userId -> timeout for delayed segment ending
                 tempDir: path.join(config.paths.temp, sessionId),
                 outputFile: path.join(config.paths.recordings, `${sessionId}.mp3`)
             };
@@ -66,6 +70,9 @@ class VoiceRecorder {
             // Set up individual user recording
             const receiver = connection.receiver;
             this.setupUserRecording(recordingSession, receiver, voiceChannel);
+
+            // Set up speaking event handlers for speech segmentation
+            this.setupSpeakingEvents(recordingSession, voiceChannel);
 
             // Handle connection state changes
             connection.on(VoiceConnectionStatus.Disconnected, () => {
@@ -153,6 +160,15 @@ class VoiceRecorder {
         try {
             const { connection, userStreams, tempDir, outputFile } = recordingSession;
 
+            // Clean up any pending segment end timers
+            if (recordingSession.segmentEndTimers) {
+                recordingSession.segmentEndTimers.forEach((timer, userId) => {
+                    clearTimeout(timer);
+                    logger.debug(`Cleared pending segment end timer for user ${userId}`);
+                });
+                recordingSession.segmentEndTimers.clear();
+            }
+
             // Stop all user streams gracefully
             const streamCleanupPromises = [];
             userStreams.forEach((streamInfo, userId) => {
@@ -224,6 +240,9 @@ class VoiceRecorder {
             // Calculate recording duration
             const duration = Date.now() - recordingSession.startTime;
             
+            // Clean up speaking event handlers
+            this.cleanupSpeakingEvents(guildId);
+            
             // Clean up session
             this.activeRecordings.delete(guildId);
 
@@ -234,7 +253,8 @@ class VoiceRecorder {
                 outputFile,
                 duration,
                 participants: Array.from(recordingSession.participants.values()),
-                filesCreated
+                filesCreated,
+                speechSegments: recordingSession.speechSegments
             };
 
         } catch (error) {
@@ -294,7 +314,7 @@ class VoiceRecorder {
                     audioStream.on('data', (chunk) => {
                         audioDataReceived = true;
                         totalDataReceived += chunk.length;
-                        logger.debug(`Audio data received for ${username}: ${chunk.length} bytes (total: ${totalDataReceived})`);
+                        logger.info(`Audio data received for ${username}: ${chunk.length} bytes (total: ${totalDataReceived})`);
                     });
 
                     // Monitor decoder for data
@@ -443,6 +463,255 @@ class VoiceRecorder {
 
         } catch (error) {
             logger.error(`Failed to set up recording for user ${username}:`, error);
+        }
+    }
+
+    setupSpeakingEvents(recordingSession, voiceChannel) {
+        const guildId = voiceChannel.guild.id;
+        const receiver = recordingSession.connection.receiver;
+        
+        try {
+            // Set up speaking event handler with error handling
+            const speakingHandler = (userId, speaking) => {
+                try {
+                    // Only process events for users in our recording channel
+                    const member = voiceChannel.members.get(userId);
+                    if (!member || member.user.bot) return;
+                    
+                    const isCurrentlySpeaking = speaking && speaking.bitfield !== 0;
+                    const timestamp = Date.now();
+                    
+                    logger.debug(`Speaking event for ${member.user.username}: ${isCurrentlySpeaking ? 'started' : 'stopped'}`);
+                    
+                    if (isCurrentlySpeaking) {
+                        this.handleSpeechStart(recordingSession, userId, member.user.username, member.displayName, timestamp);
+                    } else {
+                        this.handleSpeechStop(recordingSession, userId, timestamp);
+                    }
+                } catch (error) {
+                    logger.error(`Error in speaking event handler for user ${userId}:`, error);
+                }
+            };
+            
+            // Store the handler for cleanup
+            this.speakingHandlers.set(guildId, speakingHandler);
+            
+            // Listen for speaking events with error handling  
+            // Correct Discord.js v14 API: receiver.speaking.on('start'/'end')
+            try {
+                receiver.speaking.on('start', (userId) => {
+                    try {
+                        speakingHandler(userId, { bitfield: 1 });
+                    } catch (error) {
+                        logger.error('Error in speaking start handler:', error);
+                    }
+                });
+                
+                receiver.speaking.on('end', (userId) => {
+                    try {
+                        speakingHandler(userId, { bitfield: 0 });
+                    } catch (error) {
+                        logger.error('Error in speaking end handler:', error);
+                    }
+                });
+                
+                logger.info(`Set up speaking event listeners for guild ${guildId}`);
+                
+            } catch (error) {
+                logger.error('Failed to set up speaking event listeners:', error);
+                // Continue without speaking events - fallback to continuous recording
+            }
+            
+        } catch (error) {
+            logger.error('Failed to setup speaking events:', error);
+            // Continue without speaking events
+        }
+    }
+
+    handleSpeechStart(recordingSession, userId, username, displayName, timestamp) {
+        const { segmentEndTimers } = recordingSession;
+        
+        // Cancel any pending segment end timer for this user
+        if (segmentEndTimers.has(userId)) {
+            clearTimeout(segmentEndTimers.get(userId));
+            segmentEndTimers.delete(userId);
+            logger.debug(`Cancelled pending segment end for ${username} - continuing existing segment`);
+            return; // Continue existing segment instead of starting new one
+        }
+        
+        // Start new segment
+        this.startSpeechSegment(recordingSession, userId, username, displayName, timestamp);
+    }
+
+    handleSpeechStop(recordingSession, userId, timestamp) {
+        const { currentSpeechSegments, segmentEndTimers } = recordingSession;
+        
+        // Only handle if user has an active segment
+        if (!currentSpeechSegments.has(userId)) {
+            return;
+        }
+        
+        const segment = currentSpeechSegments.get(userId);
+        const username = segment.username;
+        
+        // Set a delay timer before actually ending the segment
+        // This allows for brief pauses between words/sentences
+        const SEGMENT_END_DELAY = 3000; // 3 seconds delay (increased for better transcription)
+        
+        const timer = setTimeout(() => {
+            logger.debug(`Segment end timer expired for ${username} - ending segment`);
+            segmentEndTimers.delete(userId);
+            this.endSpeechSegment(recordingSession, userId, timestamp);
+        }, SEGMENT_END_DELAY);
+        
+        segmentEndTimers.set(userId, timer);
+        logger.debug(`Set ${SEGMENT_END_DELAY}ms delay timer for ending ${username}'s segment`);
+    }
+
+    startSpeechSegment(recordingSession, userId, username, displayName, timestamp) {
+        try {
+            const { currentSpeechSegments, tempDir } = recordingSession;
+            
+            // If user is already speaking, ignore (shouldn't happen normally)
+            if (currentSpeechSegments.has(userId)) {
+                logger.warn(`User ${username} started speaking but already has active segment`);
+                return;
+            }
+            
+            const segmentId = `segment_${userId}_${timestamp}`;
+            const segmentFile = path.join(tempDir, `${segmentId}.pcm`);
+            
+            const segment = {
+                segmentId,
+                userId,
+                username,
+                displayName,
+                startTimestamp: timestamp,
+                endTimestamp: null,
+                duration: null,
+                filename: segmentFile,
+                writeStream: null,
+                audioStream: null,
+                decoder: null
+            };
+            
+            // Create audio recording pipeline for this segment
+            try {
+                const receiver = recordingSession.connection.receiver;
+                const audioStream = receiver.subscribe(userId, {
+                    end: { behavior: EndBehaviorType.Manual }
+                });
+                
+                const decoder = new opus.Decoder({ 
+                    rate: 48000, 
+                    channels: 2, 
+                    frameSize: 960 
+                });
+                
+                const writeStream = fs.createWriteStream(segmentFile);
+                
+                // Set up pipeline with additional error handling
+                pipeline(audioStream, decoder, writeStream, (err) => {
+                    if (err && !segment.ended) {
+                        logger.error(`Pipeline failed for segment ${segmentId}:`, err);
+                    }
+                });
+                
+                // Add error handlers for individual streams
+                audioStream.on('error', (error) => {
+                    logger.error(`Audio stream error for segment ${segmentId}:`, error);
+                });
+                
+                decoder.on('error', (error) => {
+                    logger.error(`Decoder error for segment ${segmentId}:`, error);
+                });
+                
+                writeStream.on('error', (error) => {
+                    logger.error(`Write stream error for segment ${segmentId}:`, error);
+                });
+                
+                segment.audioStream = audioStream;
+                segment.decoder = decoder;
+                segment.writeStream = writeStream;
+                
+                currentSpeechSegments.set(userId, segment);
+                
+                logger.info(`Started speech segment for ${username}: ${segmentId}`);
+                
+            } catch (error) {
+                logger.error(`Failed to create audio pipeline for speech segment ${segmentId}:`, error);
+            }
+            
+        } catch (error) {
+            logger.error(`Failed to start speech segment for user ${userId}:`, error);
+        }
+    }
+
+    endSpeechSegment(recordingSession, userId, timestamp) {
+        const { currentSpeechSegments, speechSegments } = recordingSession;
+        
+        const segment = currentSpeechSegments.get(userId);
+        if (!segment) {
+            // User wasn't speaking, ignore
+            return;
+        }
+        
+        // Mark segment as ended
+        segment.ended = true;
+        segment.endTimestamp = timestamp;
+        segment.duration = timestamp - segment.startTimestamp;
+        
+        // Clean up streams
+        try {
+            if (segment.audioStream && !segment.audioStream.destroyed) {
+                segment.audioStream.destroy();
+            }
+            if (segment.decoder && !segment.decoder.destroyed) {
+                segment.decoder.destroy();
+            }
+            if (segment.writeStream && !segment.writeStream.destroyed) {
+                segment.writeStream.end();
+            }
+        } catch (error) {
+            logger.error(`Error cleaning up segment ${segment.segmentId}:`, error);
+        }
+        
+        // Remove from active segments and add to completed segments
+        currentSpeechSegments.delete(userId);
+        
+        // Only add segments that had meaningful duration (> 4000ms for better transcription)
+        if (segment.duration > 4000) {
+            speechSegments.push({
+                segmentId: segment.segmentId,
+                userId: segment.userId,
+                username: segment.username,
+                displayName: segment.displayName,
+                startTimestamp: segment.startTimestamp,
+                endTimestamp: segment.endTimestamp,
+                duration: segment.duration,
+                filename: segment.filename
+            });
+            
+            logger.info(`Ended speech segment for ${segment.username}: ${segment.segmentId} (${segment.duration}ms)`);
+        } else {
+            // Clean up very short segments
+            try {
+                if (fs.existsSync(segment.filename)) {
+                    fs.unlinkSync(segment.filename);
+                }
+            } catch (error) {
+                logger.error(`Failed to clean up short segment file:`, error);
+            }
+            logger.debug(`Discarded short speech segment for ${segment.username}: ${segment.duration}ms`);
+        }
+    }
+
+    cleanupSpeakingEvents(guildId) {
+        // Remove speaking event handler
+        if (this.speakingHandlers.has(guildId)) {
+            // Note: Discord.js doesn't provide a clean way to remove specific handlers
+            // The handlers will be cleaned up when the connection is destroyed
+            this.speakingHandlers.delete(guildId);
         }
     }
 }

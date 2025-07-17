@@ -15,6 +15,10 @@ recordings/
 temp/
 logs/
 
+# Generated transcript files (in case they end up elsewhere)
+transcript_*.md
+*_segments.json
+
 # OS files
 .DS_Store
 Thumbs.db
