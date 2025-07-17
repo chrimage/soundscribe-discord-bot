@@ -37,6 +37,31 @@ class ExpressServer {
             });
         });
 
+        // API endpoint to get transcript data
+        this.app.get('/api/transcript/:id', (req, res) => {
+            const transcriptId = req.params.id;
+            
+            try {
+                const transcriptPath = path.join(__dirname, '../..', 'recordings', `transcript_${transcriptId}.md`);
+                
+                if (!fs.existsSync(transcriptPath)) {
+                    return res.status(404).json({ error: 'Transcript not found' });
+                }
+                
+                const content = fs.readFileSync(transcriptPath, 'utf8');
+                const stats = fs.statSync(transcriptPath);
+                
+                res.json({
+                    id: transcriptId,
+                    content: content,
+                    timestamp: stats.mtime.getTime()
+                });
+            } catch (error) {
+                logger.error('Error fetching transcript:', error);
+                res.status(500).json({ error: 'Failed to fetch transcript' });
+            }
+        });
+
         // Download endpoint with temporary URLs
         this.app.get('/download/:token', (req, res) => {
             const token = req.params.token;
@@ -122,6 +147,14 @@ class ExpressServer {
             res.status(500).json({ error: 'Internal server error' });
         });
 
+        // Serve React frontend static files
+        this.app.use(express.static(path.join(__dirname, '../..', 'public')));
+        
+        // Serve React app for root route
+        this.app.get('/', (req, res) => {
+            res.sendFile(path.join(__dirname, '../..', 'public', 'index.html'));
+        });
+        
         // 404 handler
         this.app.use((req, res) => {
             res.status(404).json({ error: 'Not found' });
@@ -131,9 +164,9 @@ class ExpressServer {
     start() {
         const port = config.express.port;
         
-        this.server = this.app.listen(port, () => {
+        this.server = this.app.listen(port, '0.0.0.0', () => {
             logger.info(`Express server started on port ${port}`);
-            logger.info(`Download URL: ${config.express.baseUrl}/download/:filename`);
+            logger.info(`Download URL: ${config.express.baseUrl}/download/[token]`);
         });
 
         return this.server;

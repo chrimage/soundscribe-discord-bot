@@ -12,7 +12,7 @@ class AudioProcessor {
         }
     }
 
-    async processRecording(tempDir, outputFile) {
+    async processRecording(tempDir, outputFile, cleanupTempFiles = true) {
         if (!fs.existsSync(tempDir)) {
             throw new Error(`Temp directory not found: ${tempDir}`);
         }
@@ -76,8 +76,10 @@ class AudioProcessor {
                     const stats = fs.statSync(outputFile);
                     const fileSize = stats.size;
                     
-                    // Clean up temp files
-                    this.cleanupTempFiles(tempDir);
+                    // Clean up temp files (if requested)
+                    if (cleanupTempFiles) {
+                        this.cleanupTempFiles(tempDir);
+                    }
                     
                     resolve({
                         outputFile,

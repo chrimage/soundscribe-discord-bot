@@ -9,11 +9,16 @@ node_modules/
 # Build outputs
 dist/
 build/
+public/
 
 # Runtime files
 recordings/
 temp/
 logs/
+
+# Generated transcript files (in case they end up elsewhere)
+transcript_*.md
+*_segments.json
 
 # OS files
 .DS_Store
