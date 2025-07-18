@@ -301,6 +301,11 @@ body {
   color: #b0b0b0;
 }
 
+.summary-actions {
+  display: flex;
+  gap: 1rem;
+}
+
 .summary-content {
   padding: 2rem;
   max-height: 70vh;
@@ -343,6 +348,36 @@ body {
 
 .summary-content li {
   margin-bottom: 0.5rem;
+}
+
+.summary-content blockquote {
+  border-left: 4px solid #4f46e5;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: #9ca3af;
+}
+
+.summary-content code {
+  background: #1f2937;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  color: #fbbf24;
+}
+
+.summary-content pre {
+  background: #1f2937;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.summary-content pre code {
+  background: none;
+  padding: 0;
 }
 
 @media (max-width: 768px) {

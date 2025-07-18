@@ -86,7 +86,7 @@ class ExpressServer {
         });
 
         // API endpoint to get summary data
-        this.app.get('/api/summary/:id/:type', (req, res) => {
+        this.app.get('/api/summary/:id/:type', async (req, res) => {
             const { id: transcriptId, type } = req.params;
 
             // Validate transcript ID to prevent path traversal
@@ -109,7 +109,7 @@ class ExpressServer {
                     });
                 }
 
-                const summary = summarizationService.getSummary(transcriptId, type);
+                const summary = await summarizationService.getSummary(transcriptId, type);
                 const stats = fs.statSync(summary.path);
 
                 res.json({
