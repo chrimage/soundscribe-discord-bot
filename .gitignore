@@ -20,10 +20,8 @@ yarn-error.log*
 recordings/
 temp/
 
-# Build outputs
-public/bundle.js
-public/bundle.js.map
-public/bundle.js.LICENSE.txt
+# Build outputs (entire directory is generated)
+public/
 
 # OS files
 .DS_Store
@@ -51,3 +49,15 @@ logs/
 # Misc
 *.tgz
 *.tar.gz
+
+# AI/Development tooling directories - DO NOT COMMIT THESE!
+.bmad-core/
+.claude/
+.gemini/
+.roomodes
+.cursor/
+.aider/
+.continue/
+
+# Build artifacts that should be generated, not committed
+# (public/ directory is already ignored above)

@@ -1,4 +1,4 @@
-const { ERROR_MESSAGES } = require('../constants');
+const { ERROR_MESSAGES: _ERROR_MESSAGES } = require('../constants');
 
 class TranscriptionError extends Error {
     constructor(message, code = 'TRANSCRIPTION_ERROR', details = null) {
@@ -51,7 +51,7 @@ function getUserFriendlyMessage(error) {
                 return `❌ Transcription failed: ${error.message}`;
         }
     }
-    
+
     if (error instanceof RecordingError) {
         switch (error.code) {
             case 'ALREADY_RECORDING':
@@ -70,11 +70,11 @@ function getUserFriendlyMessage(error) {
                 return `❌ Recording failed: ${error.message}`;
         }
     }
-    
+
     if (error instanceof ValidationError) {
         return `❌ Invalid input: ${error.message}`;
     }
-    
+
     // Generic error fallback
     return `❌ An unexpected error occurred: ${error.message}`;
 }

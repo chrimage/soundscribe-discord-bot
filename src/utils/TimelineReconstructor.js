@@ -27,7 +27,7 @@ class TimelineReconstructor {
 
         // Create timeline with silence gaps
         const timeline = this.createTimelineWithSilence(sortedSegments);
-        
+
         // Generate the mixed audio file
         await this.generateMixedAudio(timeline, outputPath);
 
@@ -45,7 +45,7 @@ class TimelineReconstructor {
 
         for (let i = 0; i < sortedSegments.length; i++) {
             const segment = sortedSegments[i];
-            
+
             // Add silence if there's a gap between segments
             const gapDuration = segment.startTimestamp - previousEndTime;
             if (gapDuration > 100) { // Only add silence for gaps > 100ms
@@ -76,11 +76,11 @@ class TimelineReconstructor {
         // Create a temporary script for FFmpeg complex filter
         const tempDir = path.dirname(outputPath);
         const scriptPath = path.join(tempDir, 'ffmpeg_script.txt');
-        
+
         try {
             // Build FFmpeg input list and filter complex
             const { inputs, filterComplex } = this.buildFFmpegCommand(timeline);
-            
+
             // Write filter complex to file for complex operations
             fs.writeFileSync(scriptPath, filterComplex);
 
@@ -164,24 +164,24 @@ class TimelineReconstructor {
                     path: event.segment.filename,
                     index: inputIndex
                 });
-                
+
                 // Add format conversion for PCM files
                 if (event.segment.filename.endsWith('.pcm')) {
                     filterChain.push(`[${inputIndex}:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono[audio${inputIndex}]`);
                 } else {
                     filterChain.push(`[${inputIndex}:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono[audio${inputIndex}]`);
                 }
-                
+
                 inputIndex++;
             } else if (event.type === 'silence') {
                 // Generate silence
-                const silenceDuration = Math.max(0.1, event.duration / 1000); // Minimum 0.1s
+                const _silenceDuration = Math.max(0.1, event.duration / 1000); // Minimum 0.1s
                 inputs.push({
                     type: 'silence',
                     duration: event.duration,
                     index: inputIndex
                 });
-                
+
                 filterChain.push(`[${inputIndex}:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono[audio${inputIndex}]`);
                 inputIndex++;
             }
@@ -198,11 +198,13 @@ class TimelineReconstructor {
     }
 
     calculateTotalDuration(timeline) {
-        if (timeline.length === 0) return 0;
-        
+        if (timeline.length === 0) {
+            return 0;
+        }
+
         const lastEvent = timeline[timeline.length - 1];
         const firstEvent = timeline[0];
-        
+
         return lastEvent.endTime - firstEvent.startTime;
     }
 
@@ -215,7 +217,7 @@ class TimelineReconstructor {
 
         try {
             const mixedAudioPath = recordingResult.outputFile.replace('.mp3', '_mixed_timeline.mp3');
-            
+
             const reconstructionResult = await this.reconstructTimeline(
                 recordingResult.speechSegments,
                 mixedAudioPath

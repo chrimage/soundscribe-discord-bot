@@ -1,7 +1,8 @@
-FROM node:18-alpine
+FROM node:lts-alpine
 
-# Install FFmpeg
-RUN apk add --no-cache ffmpeg
+# Update npm to latest version and install FFmpeg
+RUN npm install -g npm@latest && \
+    apk add --no-cache ffmpeg
 
 # Set working directory
 WORKDIR /app

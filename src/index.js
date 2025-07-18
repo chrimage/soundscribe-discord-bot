@@ -4,7 +4,7 @@ const logger = require('./utils/logger');
 const CommandHandler = require('./bot/CommandHandler');
 const ExpressServer = require('./server/ExpressServer');
 const audioProcessor = require('./audio/AudioProcessor');
-const fileManager = require('./utils/fileManager');
+const _fileManager = require('./utils/fileManager');
 const voiceRecorder = require('./audio/VoiceRecorder');
 
 class SoundScribeBot {
@@ -17,10 +17,10 @@ class SoundScribeBot {
                 GatewayIntentBits.MessageContent
             ]
         });
-        
+
         this.expressServer = new ExpressServer();
         this.commandHandler = new CommandHandler(this.client, this.expressServer);
-        
+
         // Set the client reference for voice recorder
         voiceRecorder.setClient(this.client);
     }
@@ -39,10 +39,10 @@ class SoundScribeBot {
             this.client.once('ready', () => {
                 logger.info(`Bot logged in as ${this.client.user.tag}`);
                 logger.info(`Connected to ${this.client.guilds.cache.size} guild(s)`);
-                
+
                 // Generate and display invite link
                 this.generateInviteLink();
-                
+
                 // Register slash commands
                 this.commandHandler.registerCommands();
             });
@@ -64,19 +64,19 @@ class SoundScribeBot {
 
         } catch (error) {
             logger.error('Failed to start bot:', error);
-            process.exit(1);
+            throw error;
         }
     }
 
     async stop() {
         logger.info('Shutting down bot...');
-        
+
         // Stop Express server
         this.expressServer.stop();
-        
+
         // Disconnect from Discord
         this.client.destroy();
-        
+
         logger.info('Bot shutdown complete');
     }
 
@@ -93,7 +93,7 @@ class SoundScribeBot {
         ]);
 
         const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${this.client.user.id}&permissions=${permissions.bitfield}&scope=bot%20applications.commands`;
-        
+
         logger.info('\n' + '='.repeat(80));
         logger.info('🤖 DISCORD BOT INVITE LINK');
         logger.info('='.repeat(80));
@@ -120,19 +120,19 @@ const bot = new SoundScribeBot();
 process.on('SIGINT', async () => {
     logger.info('Received SIGINT, shutting down gracefully...');
     await bot.stop();
-    process.exit(0);
+    process.exit(0); // eslint-disable-line no-process-exit
 });
 
 process.on('SIGTERM', async () => {
     logger.info('Received SIGTERM, shutting down gracefully...');
     await bot.stop();
-    process.exit(0);
+    process.exit(0); // eslint-disable-line no-process-exit
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
     logger.error('Uncaught exception:', error);
-    bot.stop().then(() => process.exit(1));
+    bot.stop().then(() => process.exit(1)); // eslint-disable-line no-process-exit
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -142,5 +142,5 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start the bot
 bot.start().catch(error => {
     logger.error('Failed to start bot:', error);
-    process.exit(1);
+    throw error;
 });

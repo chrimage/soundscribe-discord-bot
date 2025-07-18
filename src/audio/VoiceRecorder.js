@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { RECORDING, ERROR_MESSAGES, SUCCESS_MESSAGES } = require('../constants');
+const { RECORDING, ERROR_MESSAGES, _SUCCESS_MESSAGES } = require('../constants');
 
 class VoiceRecorder {
     constructor() {
@@ -20,7 +20,7 @@ class VoiceRecorder {
 
     async startRecording(interaction) {
         const guildId = interaction.guild.id;
-        
+
         if (this.activeRecordings.has(guildId)) {
             throw new Error(ERROR_MESSAGES.RECORDING.ALREADY_RECORDING);
         }
@@ -31,7 +31,7 @@ class VoiceRecorder {
         }
 
         const voiceChannel = member.voice.channel;
-        
+
         logger.info(`Starting recording in guild ${guildId}, channel ${voiceChannel.name}`);
 
         try {
@@ -100,12 +100,12 @@ class VoiceRecorder {
                 const voiceStateHandler = (oldState, newState) => {
                     if (this.activeRecordings.has(guildId)) {
                         const recordingSession = this.activeRecordings.get(guildId);
-                        
+
                         // User joined the recording channel
                         if (newState.channelId === voiceChannel.id && !newState.member.user.bot) {
                             const userId = newState.member.id;
                             const username = newState.member.user.username;
-                            
+
                             if (!recordingSession.participants.has(userId)) {
                                 logger.info(`User ${username} joined recording`);
                                 recordingSession.participants.set(userId, {
@@ -113,21 +113,21 @@ class VoiceRecorder {
                                     displayName: newState.member.displayName,
                                     joinTime: Date.now()
                                 });
-                                
+
                                 // Set up recording for the new user
                                 this.setupUserStream(recordingSession, userId, username, voiceChannel);
                             }
                         }
-                        
+
                         // User left the recording channel
                         if (oldState.channelId === voiceChannel.id && !oldState.member.user.bot) {
                             const userId = oldState.member.id;
                             const username = oldState.member.user.username;
-                            
+
                             if (recordingSession.participants.has(userId)) {
                                 logger.info(`User ${username} left recording`);
                                 recordingSession.participants.get(userId).leaveTime = Date.now();
-                                
+
                                 // End the user's stream
                                 const streamInfo = recordingSession.userStreams.get(userId);
                                 if (streamInfo && streamInfo.audioStream) {
@@ -137,7 +137,7 @@ class VoiceRecorder {
                         }
                     }
                 };
-                
+
                 this.client.on('voiceStateUpdate', voiceStateHandler);
                 recordingSession.voiceStateHandler = voiceStateHandler; // Store for cleanup
             }
@@ -175,23 +175,23 @@ class VoiceRecorder {
 
             // Stop all user streams gracefully
             const streamCleanupPromises = [];
-            userStreams.forEach((streamInfo, userId) => {
+            userStreams.forEach((streamInfo, _userId) => {
                 logger.info(`Cleaning up stream for user ${streamInfo.username}`);
-                
+
                 try {
                     // Mark stream as ended to prevent further writes
                     streamInfo.streamEnded = true;
-                    
+
                     // Close the audio stream first
                     if (streamInfo.audioStream && !streamInfo.audioStream.destroyed) {
                         streamInfo.audioStream.destroy();
                     }
-                    
+
                     // Close the decoder
                     if (streamInfo.decoder && !streamInfo.decoder.destroyed) {
                         streamInfo.decoder.destroy();
                     }
-                    
+
                     // Close the write stream
                     if (streamInfo.writeStream && !streamInfo.writeStream.destroyed) {
                         streamInfo.writeStream.end();
@@ -204,7 +204,7 @@ class VoiceRecorder {
                             })
                         );
                     }
-                    
+
                     // Also wait for pipeline to complete if it exists
                     if (streamInfo.pipelinePromise) {
                         streamCleanupPromises.push(
@@ -232,7 +232,7 @@ class VoiceRecorder {
                 const files = fs.readdirSync(tempDir);
                 filesCreated = files.filter(f => f.endsWith('.pcm')).length;
                 logger.info(`Found ${filesCreated} PCM files in temp directory`);
-                
+
                 // Log file sizes for debugging
                 files.forEach(file => {
                     const filePath = path.join(tempDir, file);
@@ -243,14 +243,14 @@ class VoiceRecorder {
 
             // Calculate recording duration
             const duration = Date.now() - recordingSession.startTime;
-            
+
             // Wait briefly for final speaking events to be processed
             await new Promise(resolve => setTimeout(resolve, 500));
-            
+
             // Clean up event handlers
             this.cleanupSpeakingEvents(guildId);
             this.cleanupVoiceStateHandler(recordingSession);
-            
+
             // Clean up session
             this.activeRecordings.delete(guildId);
 
@@ -284,29 +284,29 @@ class VoiceRecorder {
     }
 
     setupUserRecording(recordingSession, receiver, voiceChannel) {
-        const { userStreams, tempDir, startTime } = recordingSession;
+        const { userStreams, tempDir, _startTime } = recordingSession;
 
         // Subscribe to each user individually
         voiceChannel.members.forEach(member => {
             if (!member.user.bot) {
                 const userId = member.id;
                 const username = member.user.username;
-                
+
                 logger.info(`Setting up recording for user ${username} (${userId})`);
-                
+
                 try {
                     const audioStream = receiver.subscribe(userId, {
                         end: {
-                            behavior: EndBehaviorType.Manual, // Keep stream open until manually ended
-                        },
+                            behavior: EndBehaviorType.Manual // Keep stream open until manually ended
+                        }
                     });
 
                     logger.info(`Audio stream created for user ${username}`);
 
-                    const decoder = new opus.Decoder({ 
-                        rate: 48000, 
-                        channels: 2, 
-                        frameSize: 960 
+                    const decoder = new opus.Decoder({
+                        rate: 48000,
+                        channels: 2,
+                        frameSize: 960
                     });
 
                     const userFile = path.join(tempDir, `user_${userId}_${username}.pcm`);
@@ -314,7 +314,7 @@ class VoiceRecorder {
 
                     // Track stream state and data
                     let streamEnded = false;
-                    let pipelineCompleted = false;
+                    let _pipelineCompleted = false;
                     let audioDataReceived = false;
                     let totalDataReceived = 0;
 
@@ -323,7 +323,7 @@ class VoiceRecorder {
                     audioStream.on('data', (chunk) => {
                         audioDataReceived = true;
                         totalDataReceived += chunk.length;
-                        
+
                         // Throttle logging to avoid spam
                         const now = Date.now();
                         if (now - lastLogTime > 1000) { // Log once per second max
@@ -340,7 +340,7 @@ class VoiceRecorder {
                     // Set up pipeline with proper error handling
                     const pipelinePromise = new Promise((resolve, reject) => {
                         pipeline(audioStream, decoder, writeStream, (err) => {
-                            pipelineCompleted = true;
+                            _pipelineCompleted = true;
                             logger.info(`Pipeline completed for user ${username}. Audio received: ${audioDataReceived}, Total bytes: ${totalDataReceived}`);
                             if (err && !streamEnded) {
                                 logger.error(`Pipeline failed for user ${username}:`, err);
@@ -409,21 +409,21 @@ class VoiceRecorder {
         });
     }
 
-    setupUserStream(recordingSession, userId, username, voiceChannel) {
+    setupUserStream(recordingSession, userId, username, _voiceChannel) {
         const { userStreams, tempDir } = recordingSession;
         const receiver = recordingSession.connection.receiver;
-        
+
         try {
             const audioStream = receiver.subscribe(userId, {
                 end: {
-                    behavior: EndBehaviorType.Manual,
-                },
+                    behavior: EndBehaviorType.Manual
+                }
             });
 
-            const decoder = new opus.Decoder({ 
-                rate: 48000, 
-                channels: 2, 
-                frameSize: 960 
+            const decoder = new opus.Decoder({
+                rate: 48000,
+                channels: 2,
+                frameSize: 960
             });
 
             const userFile = path.join(tempDir, `user_${userId}_${username}.pcm`);
@@ -484,20 +484,22 @@ class VoiceRecorder {
     setupSpeakingEvents(recordingSession, voiceChannel) {
         const guildId = voiceChannel.guild.id;
         const receiver = recordingSession.connection.receiver;
-        
+
         try {
             // Set up speaking event handler with error handling
             const speakingHandler = (userId, speaking) => {
                 try {
                     // Only process events for users in our recording channel
                     const member = voiceChannel.members.get(userId);
-                    if (!member || member.user.bot) return;
-                    
+                    if (!member || member.user.bot) {
+                        return;
+                    }
+
                     const isCurrentlySpeaking = speaking && speaking.bitfield !== 0;
                     const timestamp = Date.now();
-                    
+
                     logger.debug(`Speaking event for ${member.user.username}: ${isCurrentlySpeaking ? 'started' : 'stopped'}`);
-                    
+
                     if (isCurrentlySpeaking) {
                         this.handleSpeechStart(recordingSession, userId, member.user.username, member.displayName, timestamp);
                     } else {
@@ -507,11 +509,11 @@ class VoiceRecorder {
                     logger.error(`Error in speaking event handler for user ${userId}:`, error);
                 }
             };
-            
+
             // Store the handler for cleanup
             this.speakingHandlers.set(guildId, speakingHandler);
-            
-            // Listen for speaking events with error handling  
+
+            // Listen for speaking events with error handling
             // Correct Discord.js v14 API: receiver.speaking.on('start'/'end')
             try {
                 receiver.speaking.on('start', (userId) => {
@@ -521,7 +523,7 @@ class VoiceRecorder {
                         logger.error('Error in speaking start handler:', error);
                     }
                 });
-                
+
                 receiver.speaking.on('end', (userId) => {
                     try {
                         speakingHandler(userId, { bitfield: 0 });
@@ -529,14 +531,14 @@ class VoiceRecorder {
                         logger.error('Error in speaking end handler:', error);
                     }
                 });
-                
+
                 logger.info(`Set up speaking event listeners for guild ${guildId}`);
-                
+
             } catch (error) {
                 logger.error('Failed to set up speaking event listeners:', error);
                 // Continue without speaking events - fallback to continuous recording
             }
-            
+
         } catch (error) {
             logger.error('Failed to setup speaking events:', error);
             // Continue without speaking events
@@ -545,7 +547,7 @@ class VoiceRecorder {
 
     handleSpeechStart(recordingSession, userId, username, displayName, timestamp) {
         const { segmentEndTimers } = recordingSession;
-        
+
         // Cancel any pending segment end timer for this user
         if (segmentEndTimers.has(userId)) {
             clearTimeout(segmentEndTimers.get(userId));
@@ -553,32 +555,32 @@ class VoiceRecorder {
             logger.debug(`Cancelled pending segment end for ${username} - continuing existing segment`);
             return; // Continue existing segment instead of starting new one
         }
-        
+
         // Start new segment
         this.startSpeechSegment(recordingSession, userId, username, displayName, timestamp);
     }
 
     handleSpeechStop(recordingSession, userId, timestamp) {
         const { currentSpeechSegments, segmentEndTimers } = recordingSession;
-        
+
         // Only handle if user has an active segment
         if (!currentSpeechSegments.has(userId)) {
             return;
         }
-        
+
         const segment = currentSpeechSegments.get(userId);
         const username = segment.username;
-        
+
         // Set a delay timer before actually ending the segment
         // This allows for brief pauses between words/sentences
         const SEGMENT_END_DELAY = RECORDING.SEGMENT_END_DELAY_MS;
-        
+
         const timer = setTimeout(() => {
             logger.debug(`Segment end timer expired for ${username} - ending segment`);
             segmentEndTimers.delete(userId);
             this.endSpeechSegment(recordingSession, userId, timestamp);
         }, SEGMENT_END_DELAY);
-        
+
         segmentEndTimers.set(userId, timer);
         logger.debug(`Set ${SEGMENT_END_DELAY}ms delay timer for ending ${username}'s segment`);
     }
@@ -586,16 +588,16 @@ class VoiceRecorder {
     startSpeechSegment(recordingSession, userId, username, displayName, timestamp) {
         try {
             const { currentSpeechSegments, tempDir } = recordingSession;
-            
+
             // If user is already speaking, ignore (shouldn't happen normally)
             if (currentSpeechSegments.has(userId)) {
                 logger.warn(`User ${username} started speaking but already has active segment`);
                 return;
             }
-            
+
             const segmentId = `segment_${userId}_${timestamp}`;
             const segmentFile = path.join(tempDir, `${segmentId}.pcm`);
-            
+
             const segment = {
                 segmentId,
                 userId,
@@ -609,54 +611,54 @@ class VoiceRecorder {
                 audioStream: null,
                 decoder: null
             };
-            
+
             // Create audio recording pipeline for this segment
             try {
                 const receiver = recordingSession.connection.receiver;
                 const audioStream = receiver.subscribe(userId, {
                     end: { behavior: EndBehaviorType.Manual }
                 });
-                
-                const decoder = new opus.Decoder({ 
-                    rate: 48000, 
-                    channels: 2, 
-                    frameSize: 960 
+
+                const decoder = new opus.Decoder({
+                    rate: 48000,
+                    channels: 2,
+                    frameSize: 960
                 });
-                
+
                 const writeStream = fs.createWriteStream(segmentFile);
-                
+
                 // Set up pipeline with additional error handling
                 pipeline(audioStream, decoder, writeStream, (err) => {
                     if (err && !segment.ended) {
                         logger.error(`Pipeline failed for segment ${segmentId}:`, err);
                     }
                 });
-                
+
                 // Add error handlers for individual streams
                 audioStream.on('error', (error) => {
                     logger.error(`Audio stream error for segment ${segmentId}:`, error);
                 });
-                
+
                 decoder.on('error', (error) => {
                     logger.error(`Decoder error for segment ${segmentId}:`, error);
                 });
-                
+
                 writeStream.on('error', (error) => {
                     logger.error(`Write stream error for segment ${segmentId}:`, error);
                 });
-                
+
                 segment.audioStream = audioStream;
                 segment.decoder = decoder;
                 segment.writeStream = writeStream;
-                
+
                 currentSpeechSegments.set(userId, segment);
-                
+
                 logger.info(`Started speech segment for ${username}: ${segmentId}`);
-                
+
             } catch (error) {
                 logger.error(`Failed to create audio pipeline for speech segment ${segmentId}:`, error);
             }
-            
+
         } catch (error) {
             logger.error(`Failed to start speech segment for user ${userId}:`, error);
         }
@@ -664,18 +666,18 @@ class VoiceRecorder {
 
     endSpeechSegment(recordingSession, userId, timestamp) {
         const { currentSpeechSegments, speechSegments } = recordingSession;
-        
+
         const segment = currentSpeechSegments.get(userId);
         if (!segment) {
             // User wasn't speaking, ignore
             return;
         }
-        
+
         // Mark segment as ended
         segment.ended = true;
         segment.endTimestamp = timestamp;
         segment.duration = timestamp - segment.startTimestamp;
-        
+
         // Clean up streams
         try {
             if (segment.audioStream && !segment.audioStream.destroyed) {
@@ -690,10 +692,10 @@ class VoiceRecorder {
         } catch (error) {
             logger.error(`Error cleaning up segment ${segment.segmentId}:`, error);
         }
-        
+
         // Remove from active segments and add to completed segments
         currentSpeechSegments.delete(userId);
-        
+
         // Only add segments that had meaningful duration (> 4000ms for better transcription)
         if (segment.duration > 4000) {
             speechSegments.push({
@@ -706,7 +708,7 @@ class VoiceRecorder {
                 duration: segment.duration,
                 filename: segment.filename
             });
-            
+
             logger.info(`Ended speech segment for ${segment.username}: ${segment.segmentId} (${segment.duration}ms)`);
         } else {
             // Clean up very short segments
@@ -715,7 +717,7 @@ class VoiceRecorder {
                     fs.unlinkSync(segment.filename);
                 }
             } catch (error) {
-                logger.error(`Failed to clean up short segment file:`, error);
+                logger.error('Failed to clean up short segment file:', error);
             }
             logger.debug(`Discarded short speech segment for ${segment.username}: ${segment.duration}ms (minimum: ${RECORDING.MIN_SEGMENT_DURATION_MS}ms)`);
         }

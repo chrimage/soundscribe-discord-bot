@@ -9,11 +9,11 @@ const requiredEnvVars = [
 
 function validateEnv() {
     const missing = requiredEnvVars.filter(varName => !process.env[varName]);
-    
+
     if (missing.length > 0) {
         console.error('Missing required environment variables:', missing.join(', '));
         console.error('Please copy .env.example to .env and fill in the required values');
-        process.exit(1);
+        throw new Error('DISCORD_TOKEN is required');
     }
 }
 
