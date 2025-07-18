@@ -16,12 +16,25 @@ class CommandHandler {
         this.expressServer = expressServer;
         this.commands = new Map();
         this.setupCommands();
+        this.setupAutocomplete();
     }
 
     // Helper to create web viewer link for transcript
     createTranscriptViewerLink(transcriptFilename) {
         const recordingId = transcriptFilename.replace('transcript_', '').replace('.md', '');
         return `${config.express.baseUrl}/?id=${recordingId}`;
+    }
+
+    setupAutocomplete() {
+        this.client.on('interactionCreate', async (interaction) => {
+            if (!interaction.isAutocomplete()) {
+                return;
+            }
+
+            if (interaction.commandName === 'summarize') {
+                await this.handleSummarizeAutocomplete(interaction);
+            }
+        });
     }
 
     setupCommands() {
@@ -75,8 +88,9 @@ class CommandHandler {
                         ))
                 .addStringOption(option =>
                     option.setName('transcript')
-                        .setDescription('Transcript ID or "latest" for most recent')
-                        .setRequired(false)),
+                        .setDescription('Transcript title or "latest" for most recent')
+                        .setRequired(false)
+                        .setAutocomplete(true)),
             execute: this.handleSummarize.bind(this)
         });
 
@@ -650,7 +664,8 @@ class CommandHandler {
                     const recentRecordings = recordings.slice(0, 10); // Show max 10
                     for (const recording of recentRecordings) {
                         const date = recording.created.toLocaleString();
-                        response += `• \`${recording.id}\` - ${recording.size}MB - ${date}\n`;
+                        const downloadUrl = this.expressServer.createTemporaryUrl(`${recording.id}.mp3`);
+                        response += `• \`${recording.id}\` - ${recording.size}MB - ${date} - [Download](${downloadUrl})\n`;
                     }
                     if (recordings.length > 10) {
                         response += `... and ${recordings.length - 10} more\n`;
@@ -663,11 +678,13 @@ class CommandHandler {
                     const recentTranscripts = transcripts.slice(0, 10); // Show max 10
                     for (const transcript of recentTranscripts) {
                         const date = transcript.created.toLocaleString();
+                        const downloadUrl = this.expressServer.createTemporaryUrl(`transcript_${transcript.id}.md`);
+                        const webViewerUrl = this.createTranscriptViewerLink(`transcript_${transcript.id}.md`);
 
                         if (transcript.title) {
-                            response += `• **${transcript.title}** (\`${transcript.id}\`) - ${date}\n`;
+                            response += `• **${transcript.title}** (\`${transcript.id}\`) - ${date} - [View](${webViewerUrl}) | [Download](${downloadUrl})\n`;
                         } else {
-                            response += `• \`${transcript.id}\` - ${date}\n`;
+                            response += `• \`${transcript.id}\` - ${date} - [View](${webViewerUrl}) | [Download](${downloadUrl})\n`;
                         }
                     }
                     if (transcripts.length > 10) {
@@ -678,8 +695,8 @@ class CommandHandler {
 
                 response += '💡 **Usage:**\n';
                 response += '• `/summarize transcript:latest` - Latest transcript\n';
-                response += '• `/summarize transcript:TRANSCRIPT_ID` - Specific transcript\n';
-                response += '• Copy transcript ID from the list above';
+                response += '• `/summarize transcript:` - Choose from autocomplete list\n';
+                response += '• Titles are generated automatically using AI';
             }
 
             await interaction.editReply({
@@ -952,6 +969,68 @@ class CommandHandler {
         } catch (error) {
             logger.error('Failed to post recording completion message:', error);
             // Don't throw - this is not critical to the recording process
+        }
+    }
+
+    async handleSummarizeAutocomplete(interaction) {
+        try {
+            const focusedValue = interaction.options.getFocused();
+            const fs = require('fs');
+
+            if (!fs.existsSync(config.paths.recordings)) {
+                await interaction.respond([]);
+                return;
+            }
+
+            // Get available transcripts with titles
+            const files = fs.readdirSync(config.paths.recordings)
+                .filter(file => file.startsWith('transcript_') && file.endsWith('.md'))
+                .map(file => {
+                    const transcriptId = file.replace('transcript_', '').replace('.md', '');
+                    const filePath = path.join(config.paths.recordings, file);
+                    const stats = fs.statSync(filePath);
+
+                    return {
+                        id: transcriptId,
+                        file: file,
+                        created: stats.ctime
+                    };
+                })
+                .sort((a, b) => b.created - a.created);
+
+            // Get titles for these transcripts
+            const choices = [];
+            choices.push({ name: 'Latest', value: 'latest' });
+
+            for (const file of files.slice(0, 24)) { // Discord limit is 25 choices
+                try {
+                    const titleData = await titleGenerationService.getTitle(file.id);
+                    const title = titleData ? titleData.title : null;
+
+                    if (title) {
+                        const name = title.length > 90 ? title.substring(0, 87) + '...' : title;
+                        choices.push({ name: name, value: file.id });
+                    } else {
+                        // Fallback to ID if no title
+                        const date = file.created.toLocaleDateString();
+                        choices.push({ name: `${file.id} (${date})`, value: file.id });
+                    }
+                } catch (_error) {
+                    // If title retrieval fails, use ID
+                    const date = file.created.toLocaleDateString();
+                    choices.push({ name: `${file.id} (${date})`, value: file.id });
+                }
+            }
+
+            // Filter choices based on focused value
+            const filtered = choices.filter(choice =>
+                choice.name.toLowerCase().includes(focusedValue.toLowerCase())
+            );
+
+            await interaction.respond(filtered);
+        } catch (error) {
+            logger.error('Error in summarize autocomplete:', error);
+            await interaction.respond([]);
         }
     }
 }
