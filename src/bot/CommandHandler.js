@@ -686,42 +686,38 @@ class CommandHandler {
             } else {
                 if (recordings.length > 0) {
                     response += '🎵 **Recordings:**\n';
-                    const recentRecordings = recordings.slice(0, 10); // Show max 10
+                    const recentRecordings = recordings.slice(0, 3); // Show max 3
                     for (const recording of recentRecordings) {
-                        const date = recording.created.toLocaleString();
-                        const downloadUrl = this.expressServer.createTemporaryUrl(`${recording.id}.mp3`);
-                        response += `• \`${recording.id}\` - ${recording.size}MB - ${date} - [Download](${downloadUrl})\n`;
+                        const date = recording.created.toLocaleDateString();
+                        response += `• \`${recording.id}\` - ${recording.size}MB - ${date}\n`;
                     }
-                    if (recordings.length > 10) {
-                        response += `... and ${recordings.length - 10} more\n`;
+                    if (recordings.length > 3) {
+                        response += `... and ${recordings.length - 3} more\n`;
                     }
                     response += '\n';
                 }
 
                 if (transcripts.length > 0) {
                     response += '📄 **Transcripts:**\n';
-                    const recentTranscripts = transcripts.slice(0, 10); // Show max 10
+                    const recentTranscripts = transcripts.slice(0, 5); // Show max 5
                     for (const transcript of recentTranscripts) {
-                        const date = transcript.created.toLocaleString();
-                        const downloadUrl = this.expressServer.createTemporaryUrl(`transcript_${transcript.id}.md`);
+                        const date = transcript.created.toLocaleDateString();
                         const webViewerUrl = this.createTranscriptViewerLink(`transcript_${transcript.id}.md`);
 
                         if (transcript.title) {
-                            response += `• **${transcript.title}** (\`${transcript.id}\`) - ${date} - [View](${webViewerUrl}) | [Download](${downloadUrl})\n`;
+                            const shortTitle = transcript.title.length > 40 ? transcript.title.substring(0, 37) + '...' : transcript.title;
+                            response += `• **${shortTitle}** - ${date} - [View](${webViewerUrl})\n`;
                         } else {
-                            response += `• \`${transcript.id}\` - ${date} - [View](${webViewerUrl}) | [Download](${downloadUrl})\n`;
+                            response += `• \`${transcript.id}\` - ${date} - [View](${webViewerUrl})\n`;
                         }
                     }
-                    if (transcripts.length > 10) {
-                        response += `... and ${transcripts.length - 10} more\n`;
+                    if (transcripts.length > 5) {
+                        response += `... and ${transcripts.length - 5} more\n`;
                     }
                     response += '\n';
                 }
 
-                response += '💡 **Usage:**\n';
-                response += '• `/summarize transcript:latest` - Latest transcript\n';
-                response += '• `/summarize transcript:` - Choose from autocomplete list\n';
-                response += '• Titles are generated automatically using AI';
+                response += '💡 Use `/summarize` to generate summaries from transcripts.';
             }
 
             await interaction.editReply({

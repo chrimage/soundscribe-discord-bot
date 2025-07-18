@@ -109,7 +109,7 @@ class ExpressServer {
                     });
                 }
 
-                const summary = await summarizationService.getSummary(transcriptId, type);
+                const summary = summarizationService.getSummary(transcriptId, type);
                 const stats = fs.statSync(summary.path);
 
                 res.json({

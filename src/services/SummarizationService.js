@@ -209,7 +209,7 @@ Please provide a ${type} summary that captures the key points, main topics discu
         return fs.existsSync(summaryPath);
     }
 
-    async getSummary(transcriptId, type) {
+    getSummary(transcriptId, type) {
         const summaryPath = this.getSummaryPath(transcriptId, type);
 
         if (!fs.existsSync(summaryPath)) {
