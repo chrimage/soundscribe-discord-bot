@@ -276,16 +276,9 @@ class CommandHandler {
                         }
                     }
 
-                    // Post public completion message to the text channel
-                    await this.postRecordingCompletionMessage(interaction, {
-                        recordingId: path.basename(recordingResult.outputFile, '.mp3'),
-                        transcriptId: path.basename(recordingResult.outputFile, '.mp3'),
-                        title: generatedTitle?.title,
-                        briefSummary,
-                        transcriptPath: path.join(path.dirname(recordingResult.outputFile), `transcript_${path.basename(recordingResult.outputFile, '.mp3')}.md`),
-                        recordingPath: recordingResult.outputFile,
-                        transcriptStats
-                    });
+                    // Store data for the improved /stop response
+                    recordingResult.generatedTitle = generatedTitle;
+                    recordingResult.briefSummary = briefSummary;
 
                 } catch (error) {
                     logger.error('Failed to auto-generate transcript:', error);
@@ -314,31 +307,45 @@ class CommandHandler {
             const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
 
             // Build response message
-            let responseContent = '✅ Recording completed!\n\n' +
-                    '📊 **Recording Details:**\n' +
-                    `• Duration: ${durationMinutes} minutes\n` +
-                    `• File size: ${fileSizeMB} MB\n` +
-                    `• Participants: ${recordingResult.participants.length}\n` +
-                    `• Audio segments: ${processedResult.segmentCount}\n\n` +
-                    `🎵 **Audio Download:** ${downloadUrl}\n`;
+            let responseContent = '🎙️ **Recording Complete!**\n\n';
+
+            // Add title if available
+            if (recordingResult.generatedTitle) {
+                responseContent += `📝 **"${recordingResult.generatedTitle.title}"**\n\n`;
+            }
+
+            // Add summary if available
+            if (recordingResult.briefSummary) {
+                const maxSummaryLength = 800;
+                const displaySummary = recordingResult.briefSummary.length > maxSummaryLength
+                    ? recordingResult.briefSummary.substring(0, maxSummaryLength) + '...'
+                    : recordingResult.briefSummary;
+                responseContent += `📋 **Summary:**\n${displaySummary}\n\n`;
+            }
+
+            responseContent += '🔗 **Links:**\n';
+            responseContent += `• 🎵 [Audio Recording](${downloadUrl})\n`;
 
             // Add transcript info if available
             if (transcriptUrl && transcriptStats) {
                 const recordingId = path.basename(recordingResult.outputFile, '.mp3');
                 const webViewerUrl = this.createTranscriptViewerLink(`transcript_${recordingId}.md`);
-                responseContent += `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${transcriptUrl})\n` +
-                    `• Transcribed segments: ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments}\n` +
-                    `• Participants: ${transcriptStats.participants.join(', ')}\n`;
-
-                // Add title info if available
-                if (generatedTitle) {
-                    responseContent += `🏷️ **Title:** "${generatedTitle.title}"\n`;
-                }
+                const detailedSummaryUrl = `${config.express.baseUrl}/summary?id=${recordingId}&type=detailed`;
+                
+                responseContent += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\n`;
+                responseContent += `• 📊 [Detailed Summary](${detailedSummaryUrl})\n\n`;
+                
+                responseContent += `📈 **Stats:** ${transcriptStats.participants.join(', ')} • ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments\n\n`;
             } else if (recordingResult.speechSegments && recordingResult.speechSegments.length > 0) {
-                responseContent += '⚠️ **Transcript:** Generation failed, but you can try /transcribe later\n';
+                responseContent += '⚠️ **Transcript:** Generation failed, but you can try /transcribe later\n\n';
+            } else {
+                responseContent += `\n📊 **Recording Details:**\n`;
+                responseContent += `• Duration: ${durationMinutes} minutes\n`;
+                responseContent += `• File size: ${fileSizeMB} MB\n`;
+                responseContent += `• Participants: ${recordingResult.participants.length}\n\n`;
             }
 
-            responseContent += '\n⚠️ Files are automatically deleted after 24 hours.';
+            responseContent += '⚠️ *Files expire in 24 hours*';
 
             await interaction.editReply({
                 content: responseContent
