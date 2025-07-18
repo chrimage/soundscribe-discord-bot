@@ -6,8 +6,7 @@ services:
     user: "1000:1000"
     environment:
       - NODE_ENV=production
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - DISCORD_BOT_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - DOMAIN=${DOMAIN}
       - BASE_URL=${BASE_URL}

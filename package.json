@@ -2,16 +2,10 @@
   "name": "soundscribe",
   "version": "1.0.0",
   "main": "src/index.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "start": "node src/index.js",
     "build": "webpack --mode=production",
     "dev": "node --watch src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "validate": "node scripts/validate-technical-assumptions.js",
-    "validate-standalone": "node scripts/validate-standalone.js",
     "setup": "node scripts/setup.js"
   },
   "keywords": [

@@ -3,7 +3,8 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const requiredEnvVars = [
-    'DISCORD_BOT_TOKEN'
+    'DISCORD_BOT_TOKEN',
+    'GROQ_API_KEY'
 ];
 
 function validateEnv() {
@@ -21,9 +22,12 @@ const config = {
         token: process.env.DISCORD_BOT_TOKEN,
         guildId: process.env.GUILD_ID
     },
+    groq: {
+        apiKey: process.env.GROQ_API_KEY
+    },
     express: {
-        port: parseInt(process.env.EXPRESS_PORT) || 3000,
-        baseUrl: process.env.BASE_URL || `http://localhost:${process.env.EXPRESS_PORT || 3000}`
+        port: parseInt(process.env.WEB_PORT || process.env.EXPRESS_PORT) || 3000,
+        baseUrl: process.env.BASE_URL || `http://localhost:${process.env.WEB_PORT || process.env.EXPRESS_PORT || 3000}`
     },
     security: {
         temporaryUrlExpiry: 24 * 60 * 60 * 1000 // 24 hours in milliseconds

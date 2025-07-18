@@ -3,12 +3,13 @@ const path = require('path');
 const FormData = require('form-data');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
+const config = require('../config');
 const logger = require('../utils/logger');
 const { TRANSCRIPTION, ERROR_MESSAGES } = require('../constants');
 
 class TranscriptionService {
     constructor() {
-        this.groqApiKey = process.env.GROQ_API_KEY;
+        this.groqApiKey = config.groq.apiKey;
         this.groqBaseUrl = 'https://api.groq.com/openai/v1';
         
         if (!this.groqApiKey) {

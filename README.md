@@ -176,7 +176,6 @@ soundscribe-js/
 ├── scripts/            # Setup and validation
 ├── recordings/         # Audio files and transcripts
 ├── temp/               # Temporary files
-├── docs/               # Documentation
 ├── Dockerfile          # Docker container config
 ├── docker-compose.yml  # Multi-container setup
 └── webpack.config.js   # Frontend build config
@@ -184,9 +183,6 @@ soundscribe-js/
 
 ### Testing
 ```bash
-# Validate technical assumptions
-npm run validate
-
 # Manual testing checklist
 # 1. Bot connects to Discord
 # 2. Can join voice channel
@@ -209,7 +205,7 @@ npm run dev  # Auto-restart on file changes
    # Update .env for production
    DOMAIN=yourdomain.com
    BASE_URL=https://yourdomain.com
-   DISCORD_TOKEN=your_production_token
+   DISCORD_BOT_TOKEN=your_production_token
    GROQ_API_KEY=your_groq_key
    ```
 
@@ -227,7 +223,7 @@ npm run dev  # Auto-restart on file changes
 ### Environment Variables
 ```bash
 # Required
-DISCORD_TOKEN=your_discord_bot_token
+DISCORD_BOT_TOKEN=your_discord_bot_token
 GROQ_API_KEY=your_groq_api_key
 
 # Production
@@ -314,14 +310,9 @@ WEB_HOST=0.0.0.0
 
 ## 🔄 Planned Enhancements
 
-- Individual participant recording (multi-track)
-- JWT-based authentication for secure access
-- Multi-guild support with isolated recordings
-- Enhanced speaker diarization
-- Real-time transcription streaming
-- Advanced audio processing and noise reduction
+- Transcript summarization
 - Transcript search and indexing
-- Integration with cloud storage providers
+- Improved transcription and recording storage system
 
 ## 🤝 Contributing
 
