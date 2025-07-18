@@ -37,8 +37,10 @@ class VoiceRecorder {
 
         logger.info(`Starting recording in guild ${guildId}, channel ${voiceChannel.name}`);
 
+        let connection = null;
+        
         try {
-            const connection = joinVoiceChannel({
+            connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: guildId,
                 adapterCreator: interaction.guild.voiceAdapterCreator,
@@ -59,6 +61,9 @@ class VoiceRecorder {
                 tempDir: path.join(config.paths.temp, sessionId),
                 outputFile: path.join(config.paths.recordings, `${sessionId}.mp3`)
             };
+
+            // Add to activeRecordings early so we can clean up if there's an error
+            this.activeRecordings.set(guildId, recordingSession);
 
             // Create directories
             if (!fs.existsSync(config.paths.temp)) {
@@ -145,14 +150,27 @@ class VoiceRecorder {
                 recordingSession.voiceStateHandler = voiceStateHandler; // Store for cleanup
             }
 
-            this.activeRecordings.set(guildId, recordingSession);
-
             logger.info(`VoiceRecorder: Recording started successfully in guild ${guildId}`);
             logger.info(`VoiceRecorder: Active recordings after start: ${JSON.stringify(Array.from(this.activeRecordings.keys()))}`);
             return recordingSession;
 
         } catch (error) {
             logger.error('Failed to start recording:', error);
+            
+            // Clean up partial state if recording failed
+            if (this.activeRecordings.has(guildId)) {
+                logger.info(`VoiceRecorder: Cleaning up failed recording for guild ${guildId}`);
+                const session = this.activeRecordings.get(guildId);
+                if (session && session.connection) {
+                    session.connection.destroy();
+                }
+                this.activeRecordings.delete(guildId);
+            } else if (connection) {
+                // If we have a connection but no session, clean it up
+                logger.info(`VoiceRecorder: Cleaning up orphaned connection for guild ${guildId}`);
+                connection.destroy();
+            }
+            
             throw error;
         }
     }
