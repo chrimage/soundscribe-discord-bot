@@ -1,5 +1,5 @@
 const fs = require('fs');
-const path = require('path');
+const _path = require('path');
 const FormData = require('form-data');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
@@ -11,7 +11,7 @@ class TranscriptionService {
     constructor() {
         this.groqApiKey = config.groq.apiKey;
         this.groqBaseUrl = 'https://api.groq.com/openai/v1';
-        
+
         if (!this.groqApiKey) {
             logger.warn('GROQ_API_KEY not found in environment variables');
         }
@@ -23,16 +23,16 @@ class TranscriptionService {
         }
 
         const transcriptionResults = [];
-        
+
         logger.info(`Starting transcription of ${speechSegments.length} speech segments`);
 
         for (const segment of speechSegments) {
             try {
                 logger.info(`Transcribing segment ${segment.segmentId} for ${segment.displayName}`);
-                
+
                 // Convert PCM to WAV for Groq API
                 const wavFile = await this.convertPcmToWav(segment.filename);
-                
+
                 // Check file size (Groq API limit)
                 const fileStats = fs.statSync(wavFile);
                 if (fileStats.size > TRANSCRIPTION.MAX_FILE_SIZE_BYTES) {
@@ -69,7 +69,7 @@ class TranscriptionService {
                 }
 
                 const transcription = await this.transcribeFile(wavFile);
-                
+
                 transcriptionResults.push({
                     ...segment,
                     transcription: transcription.text || '[Transcription failed]',
@@ -136,19 +136,21 @@ class TranscriptionService {
     }
 
     calculateAverageConfidence(segments) {
-        if (!segments || segments.length === 0) return null;
-        
+        if (!segments || segments.length === 0) {
+            return null;
+        }
+
         const totalLogProb = segments.reduce((sum, segment) => {
             return sum + (segment.avg_logprob || -1.0);
         }, 0);
-        
+
         const avgLogProb = totalLogProb / segments.length;
-        
+
         // Convert log probability to percentage confidence
         // Log probabilities are typically -∞ to 0, where 0 is perfect confidence
         // We'll convert to 0-100% where -1.0 ≈ 37%, -2.0 ≈ 14%, etc.
         const confidencePercent = Math.max(0, Math.min(100, Math.exp(avgLogProb) * 100));
-        
+
         return confidencePercent;
     }
 
@@ -200,7 +202,7 @@ class TranscriptionService {
 
         const lines = [];
         lines.push('# Voice Channel Transcript\n');
-        
+
         // Add metadata
         const metadata = this.generateMetadata(transcriptionResults);
         lines.push(`**Recording Date:** ${metadata.recordingDate}`);
@@ -214,7 +216,7 @@ class TranscriptionService {
             const timestamp = new Date(result.startTimestamp).toISOString().substr(11, 8); // HH:MM:SS
             const speaker = result.displayName || result.username;
             const confidence = result.confidence ? ` (${result.confidence.toFixed(1)}%)` : '';
-            
+
             lines.push(`**[${timestamp}] ${speaker}${confidence}:**`);
             lines.push(`${result.transcription}\n`);
         }
@@ -227,9 +229,9 @@ class TranscriptionService {
 
     generateMetadata(transcriptionResults) {
         const participants = [...new Set(transcriptionResults.map(r => r.displayName || r.username))];
-        const transcribedSegments = transcriptionResults.filter(r => 
-            r.transcription && 
-            r.transcription !== '[No speech detected]' && 
+        const transcribedSegments = transcriptionResults.filter(r =>
+            r.transcription &&
+            r.transcription !== '[No speech detected]' &&
             r.transcription !== '[Transcription error]' &&
             r.transcription !== '[Audio segment too large for transcription]'
         ).length;
@@ -283,34 +285,34 @@ class TranscriptionService {
             const buffer = fs.readFileSync(pcmFilePath);
             const maxSamplesToAnalyze = 48000; // Analyze max 1 second of audio
             const bytesToRead = Math.min(buffer.length, maxSamplesToAnalyze * 2);
-            
+
             // PCM is 16-bit signed little endian, 2 channels (stereo)
             let sumSquares = 0;
             let maxAmplitude = 0;
             let sampleCount = 0;
-            
+
             for (let i = 0; i < bytesToRead - 1; i += 2) {
                 const sample = buffer.readInt16LE(i) / 32768.0; // Normalize to -1.0 to 1.0
                 const amplitude = Math.abs(sample);
-                
+
                 sumSquares += sample * sample;
                 maxAmplitude = Math.max(maxAmplitude, amplitude);
                 sampleCount++;
             }
-            
+
             const rmsEnergy = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
-            const isLikelySilence = rmsEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY && 
+            const isLikelySilence = rmsEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY &&
                                    maxAmplitude < TRANSCRIPTION.MIN_PEAK_AMPLITUDE;
-            
+
             logger.debug(`Audio quality analysis: RMS=${rmsEnergy.toFixed(4)}, Peak=${maxAmplitude.toFixed(4)}, Samples=${sampleCount}, Silence=${isLikelySilence}`);
-            
+
             return {
                 avgEnergy: rmsEnergy,
                 peakAmplitude: maxAmplitude,
                 sampleCount,
                 isLikelySilence
             };
-            
+
         } catch (error) {
             logger.error(`Failed to analyze audio quality for ${pcmFilePath}:`, error);
             // Return permissive values on error so we don't skip potentially valid audio

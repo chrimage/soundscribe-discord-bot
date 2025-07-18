@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const logger = require('../src/utils/logger');
+const _logger = require('../src/utils/logger');
 
 class SetupWizard {
     constructor() {
@@ -31,21 +31,21 @@ class SetupWizard {
             await this.setupEnvironment();
             await this.createDirectories();
             await this.checkDiscordPermissions();
-            
+
             this.printSummary();
-            
+
         } catch (error) {
             console.error('❌ Setup failed:', error.message);
-            process.exit(1);
+            throw error;
         }
     }
 
     async checkNodeVersion() {
         console.log('📦 Checking Node.js version...');
-        
+
         const nodeVersion = process.version;
         const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0]);
-        
+
         if (majorVersion >= 18) {
             console.log(`✅ Node.js ${nodeVersion} is supported`);
             this.checklist.node = true;
@@ -56,13 +56,13 @@ class SetupWizard {
 
     async checkFFmpeg() {
         console.log('🎵 Checking FFmpeg installation...');
-        
+
         try {
             const result = execSync('ffmpeg -version', { encoding: 'utf8' });
             const version = result.split('\n')[0];
             console.log(`✅ FFmpeg found: ${version}`);
             this.checklist.ffmpeg = true;
-        } catch (error) {
+        } catch (_error) {
             console.log('❌ FFmpeg not found in PATH');
             console.log('   Please install FFmpeg:');
             console.log('   - Ubuntu/Debian: sudo apt install ffmpeg');
@@ -74,10 +74,10 @@ class SetupWizard {
 
     async setupEnvironment() {
         console.log('⚙️  Setting up environment configuration...');
-        
+
         const envPath = path.join(process.cwd(), '.env');
         const envExamplePath = path.join(process.cwd(), '.env.example');
-        
+
         if (!fs.existsSync(envPath)) {
             if (fs.existsSync(envExamplePath)) {
                 fs.copyFileSync(envExamplePath, envPath);
@@ -89,15 +89,15 @@ class SetupWizard {
         } else {
             console.log('✅ .env file already exists');
         }
-        
+
         this.checklist.env = true;
     }
 
     async createDirectories() {
         console.log('📁 Creating necessary directories...');
-        
+
         const directories = ['recordings', 'temp', 'logs'];
-        
+
         directories.forEach(dir => {
             const dirPath = path.join(process.cwd(), dir);
             if (!fs.existsSync(dirPath)) {
@@ -107,13 +107,13 @@ class SetupWizard {
                 console.log(`✅ ${dir}/ directory already exists`);
             }
         });
-        
+
         this.checklist.directories = true;
     }
 
     async checkDiscordPermissions() {
         console.log('🤖 Checking Discord bot permissions...');
-        
+
         console.log('   Required permissions:');
         console.log('   - View Channels');
         console.log('   - Connect to voice channels');
@@ -122,24 +122,24 @@ class SetupWizard {
         console.log('   - Send Messages');
         console.log('   - Embed Links');
         console.log('   - Use Slash Commands');
-        
+
         console.log('   📋 Instructions:');
         console.log('   1. The bot will automatically generate an invite link when started');
         console.log('   2. Copy the invite link from the console output');
         console.log('   3. Paste it in your browser to invite the bot to your server');
         console.log('   4. All required permissions will be included automatically');
-        
+
         this.checklist.permissions = true;
     }
 
     printSummary() {
         console.log('\n📋 Setup Summary:\n');
-        
+
         Object.entries(this.checklist).forEach(([item, status]) => {
             const icon = status ? '✅' : '❌';
             console.log(`${icon} ${item.charAt(0).toUpperCase() + item.slice(1)}`);
         });
-        
+
         console.log('\n🎯 Next Steps:');
         console.log('1. Edit .env file and add your Discord bot token');
         console.log('2. Install FFmpeg if not already installed');

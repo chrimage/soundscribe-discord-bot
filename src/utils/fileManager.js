@@ -7,10 +7,10 @@ class FileManager {
     constructor() {
         this.recordingsDir = config.paths.recordings;
         this.tempDir = config.paths.temp;
-        
+
         // Ensure directories exist
         this.ensureDirectories();
-        
+
         // Start cleanup interval (every hour)
         this.startCleanupInterval();
     }
@@ -20,7 +20,7 @@ class FileManager {
             fs.mkdirSync(this.recordingsDir, { recursive: true });
             logger.info(`Created recordings directory: ${this.recordingsDir}`);
         }
-        
+
         if (!fs.existsSync(this.tempDir)) {
             fs.mkdirSync(this.tempDir, { recursive: true });
             logger.info(`Created temp directory: ${this.tempDir}`);
@@ -137,7 +137,7 @@ class FileManager {
         try {
             const recordings = this.getAllRecordings();
             const totalSize = recordings.reduce((sum, file) => sum + file.size, 0);
-            
+
             return {
                 fileCount: recordings.length,
                 totalSize,

@@ -40,9 +40,9 @@ class AudioProcessor {
 
         return new Promise((resolve, reject) => {
             const startTime = Date.now();
-            
+
             const ffmpegCommand = ffmpeg();
-            
+
             // Add each user file as input
             validFiles.forEach(file => {
                 ffmpegCommand.input(file)
@@ -54,7 +54,7 @@ class AudioProcessor {
             });
 
             // Mix all inputs together
-            const filterComplex = validFiles.length > 1 
+            const filterComplex = validFiles.length > 1
                 ? `amix=inputs=${validFiles.length}:duration=longest:dropout_transition=0`
                 : null;
 
@@ -65,22 +65,22 @@ class AudioProcessor {
             ffmpegCommand
                 .audioCodec('libmp3lame')
                 .audioBitrate(config.audio.quality)
-                .on('start', (commandLine) => {
-                    logger.debug(`FFmpeg processing started`);
+                .on('start', (_commandLine) => {
+                    logger.debug('FFmpeg processing started');
                 })
                 .on('end', () => {
                     const processingTime = Date.now() - startTime;
                     logger.info(`Processing completed in ${processingTime}ms`);
-                    
+
                     // Get file size
                     const stats = fs.statSync(outputFile);
                     const fileSize = stats.size;
-                    
+
                     // Clean up temp files (if requested)
                     if (cleanupTempFiles) {
                         this.cleanupTempFiles(tempDir);
                     }
-                    
+
                     resolve({
                         outputFile,
                         processingTime,
@@ -113,11 +113,11 @@ class AudioProcessor {
 
     async testProcessingPerformance(durationMinutes = 1) {
         logger.info(`Testing processing performance for ${durationMinutes} minute recording`);
-        
+
         // Create a test PCM file with silence
         const testInput = path.join(config.paths.temp, `test_${durationMinutes}min.pcm`);
         const testOutput = path.join(config.paths.recordings, `test_${durationMinutes}min.mp3`);
-        
+
         try {
             // Generate test PCM data (silence)
             const sampleRate = 48000;
@@ -125,27 +125,27 @@ class AudioProcessor {
             const bytesPerSample = 2;
             const totalSamples = sampleRate * durationMinutes * 60;
             const bufferSize = totalSamples * channels * bytesPerSample;
-            
+
             const silence = Buffer.alloc(bufferSize, 0);
             fs.writeFileSync(testInput, silence);
-            
+
             const startTime = Date.now();
-            const result = await this.processRecording(testInput, testOutput);
+            const _result = await this.processRecording(testInput, testOutput);
             const totalTime = Date.now() - startTime;
-            
+
             logger.info(`Performance test completed: ${durationMinutes}min recording processed in ${totalTime}ms`);
-            
+
             // Clean up test files
             if (fs.existsSync(testOutput)) {
                 fs.unlinkSync(testOutput);
             }
-            
+
             return {
                 durationMinutes,
                 processingTimeMs: totalTime,
                 ratio: totalTime / (durationMinutes * 60 * 1000)
             };
-            
+
         } catch (error) {
             logger.error('Performance test failed:', error);
             throw error;
