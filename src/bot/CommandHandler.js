@@ -134,7 +134,12 @@ class CommandHandler {
         try {
             await interaction.deferReply({ ephemeral: true });
 
+            const guildId = interaction.guild.id;
+            logger.info(`Join command: Starting recording for guild ${guildId}`);
+
             const _recordingSession = await voiceRecorder.startRecording(interaction);
+
+            logger.info(`Join command: Recording started successfully for guild ${guildId}`);
 
             await interaction.editReply({
                 content: `🎙️ Started recording in ${interaction.member.voice.channel.name}! Use /stop to finish recording.`
@@ -153,6 +158,19 @@ class CommandHandler {
             await interaction.deferReply();
 
             const guildId = interaction.guild.id;
+            logger.info(`Stop command: Attempting to stop recording for guild ${guildId}`);
+            
+            // Check if recording is active before trying to stop
+            if (!voiceRecorder.isRecordingActive(guildId)) {
+                logger.warn(`Stop command: No active recording found for guild ${guildId}`);
+                logger.info(`Stop command: Active recordings: ${JSON.stringify(voiceRecorder.getAllActiveRecordings())}`);
+                
+                await interaction.editReply({
+                    content: '❌ No active recording found. Use /join to start a recording first.'
+                });
+                return;
+            }
+
             const recordingResult = await voiceRecorder.stopRecording(guildId);
 
             // Check if any audio was captured

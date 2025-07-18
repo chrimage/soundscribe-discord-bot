@@ -21,6 +21,9 @@ class VoiceRecorder {
     async startRecording(interaction) {
         const guildId = interaction.guild.id;
 
+        logger.info(`VoiceRecorder: Starting recording for guild ${guildId}`);
+        logger.info(`VoiceRecorder: Current active recordings: ${JSON.stringify(Array.from(this.activeRecordings.keys()))}`);
+
         if (this.activeRecordings.has(guildId)) {
             throw new Error(ERROR_MESSAGES.RECORDING.ALREADY_RECORDING);
         }
@@ -144,7 +147,8 @@ class VoiceRecorder {
 
             this.activeRecordings.set(guildId, recordingSession);
 
-            logger.info(`Recording started successfully in guild ${guildId}`);
+            logger.info(`VoiceRecorder: Recording started successfully in guild ${guildId}`);
+            logger.info(`VoiceRecorder: Active recordings after start: ${JSON.stringify(Array.from(this.activeRecordings.keys()))}`);
             return recordingSession;
 
         } catch (error) {
@@ -154,12 +158,16 @@ class VoiceRecorder {
     }
 
     async stopRecording(guildId) {
+        logger.info(`VoiceRecorder: Attempting to stop recording for guild ${guildId}`);
+        logger.info(`VoiceRecorder: Current active recordings: ${JSON.stringify(Array.from(this.activeRecordings.keys()))}`);
+        
         const recordingSession = this.activeRecordings.get(guildId);
         if (!recordingSession) {
+            logger.error(`VoiceRecorder: No active recording found for guild ${guildId}`);
             throw new Error(ERROR_MESSAGES.RECORDING.NO_ACTIVE_RECORDING);
         }
 
-        logger.info(`Stopping recording in guild ${guildId}`);
+        logger.info(`VoiceRecorder: Stopping recording in guild ${guildId}`);
 
         try {
             const { connection, userStreams, tempDir, outputFile } = recordingSession;
