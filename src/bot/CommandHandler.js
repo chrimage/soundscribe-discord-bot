@@ -655,13 +655,13 @@ class CommandHandler {
                         // Extract transcript ID from filename
                         const transcriptId = file.replace('transcript_', '').replace('.md', '');
 
-                        // Try to get title for this transcript
+                        // Try to get title for this transcript (non-blocking)
                         let title = null;
                         try {
-                            const titleData = await titleGenerationService.getTitle(transcriptId);
+                            const titleData = titleGenerationService.getTitle(transcriptId);
                             title = titleData ? titleData.title : null;
                         } catch (_error) {
-                            logger.debug(`No title found for transcript ${transcriptId}`);
+                            // No title found, use null
                         }
 
                         transcripts.push({
@@ -1025,7 +1025,7 @@ class CommandHandler {
 
             for (const file of files.slice(0, 24)) { // Discord limit is 25 choices
                 try {
-                    const titleData = await titleGenerationService.getTitle(file.id);
+                    const titleData = titleGenerationService.getTitle(file.id);
                     const title = titleData ? titleData.title : null;
 
                     if (title) {

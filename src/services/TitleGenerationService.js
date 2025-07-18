@@ -250,7 +250,7 @@ Return only the title, nothing else.`;
      * @param {string} transcriptId - Transcript identifier
      * @returns {Promise<object|null>} - Title metadata or null if not found
      */
-    async getTitle(transcriptId) {
+    getTitle(transcriptId) {
         const titlePath = path.join(config.paths.recordings, `title_${transcriptId}.json`);
 
         if (!fs.existsSync(titlePath)) {
