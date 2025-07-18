@@ -9,13 +9,18 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (needed for webpack build)
+RUN npm ci
 
 # Copy source code
 COPY src/ ./src/
-COPY public/ ./public/
 COPY webpack.config.js ./
+
+# Build frontend
+RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
 
 # Expose port
 EXPOSE 3000
