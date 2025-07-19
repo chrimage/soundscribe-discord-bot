@@ -8,12 +8,14 @@ const fileManager = require('../utils/fileManager');
 const transcriptionService = require('../services/TranscriptionService');
 const summarizationService = require('../services/SummarizationService');
 const titleGenerationService = require('../services/TitleGenerationService');
+const BackgroundJobManager = require('./BackgroundJobManager');
 const { _COMMANDS, _ERROR_MESSAGES } = require('../constants');
 
 class CommandHandler {
     constructor(client, expressServer) {
         this.client = client;
         this.expressServer = expressServer;
+        this.backgroundJobManager = new BackgroundJobManager(expressServer);
         this.commands = new Map();
         this.setupCommands();
         this.setupAutocomplete();
@@ -227,11 +229,7 @@ class CommandHandler {
                 return;
             }
 
-            await interaction.editReply({
-                content: '🎙️ **Processing recording...** ⏳'
-            });
-
-            // Create mixed audio file from user recordings
+            // FAST operations only - process audio immediately  
             const processedResult = await audioProcessor.createMixedRecording(recordingResult);
 
             // Generate immediate response with audio download
@@ -246,10 +244,9 @@ class CommandHandler {
             // Respond immediately with audio download
             let immediateResponse = '🎙️ **Recording Complete!**\n\n';
             immediateResponse += '🔗 **Audio Recording:**\n';
-            immediateResponse += `• 🎵 [Download MP3](${downloadUrl})\n\n`;
+            immediateResponse += `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\n\n`;
             immediateResponse += '📊 **Recording Details:**\n';
             immediateResponse += `• Duration: ${durationMinutes} minutes\n`;
-            immediateResponse += `• File size: ${fileSizeMB} MB\n`;
             immediateResponse += `• Participants: ${recordingResult.participants.length}\n`;
             immediateResponse += `• Speech segments: ${recordingResult.speechSegments ? recordingResult.speechSegments.length : 0}\n\n`;
 
@@ -264,12 +261,19 @@ class CommandHandler {
 
             await interaction.editReply({ content: immediateResponse });
 
-            // Start async transcription process if we have speech segments
+            // Queue SLOW operations in background (transcription, title, summary)
             if (canTranscribe) {
-                this.processSegmentTranscriptionAsync(interaction, recordingResult, processedResult, downloadUrl)
-                    .catch(error => {
-                        logger.error('Async transcription failed:', error);
-                    });
+                const recordingId = path.basename(processedResult.outputFile, '.mp3');
+                
+                this.backgroundJobManager.queueTranscription({
+                    recordingData: recordingResult,
+                    processedResult: processedResult,
+                    recordingId: recordingId,
+                    interactionToken: interaction.token,
+                    webhookUrl: `https://discord.com/api/webhooks/${interaction.applicationId}/${interaction.token}`
+                });
+                
+                logger.info(`Queued background transcription for recording ${recordingId}`);
             }
 
             // Clean up temp files
@@ -988,128 +992,6 @@ class CommandHandler {
         }
     }
 
-    async processSegmentTranscriptionAsync(interaction, recordingResult, processedResult, downloadUrl) {
-        let transcriptUrl = null;
-        let transcriptStats = null;
-        let generatedTitle = null;
-        let briefSummary = null;
-
-        try {
-            logger.info(`Starting segment-based transcription for ${recordingResult.speechSegments.length} speech segments`);
-
-            // Transcribe speech segments using the new approach
-            const transcriptionResults = await transcriptionService.transcribeSpeechSegments(
-                recordingResult.speechSegments,
-                recordingResult.userFiles
-            );
-            const transcript = transcriptionService.formatTranscript(transcriptionResults);
-
-            // Save transcript to file
-            const recordingId = path.basename(processedResult.outputFile, '.mp3');
-            const transcriptFilename = `transcript_${recordingId}.md`;
-            const transcriptPath = path.join(path.dirname(processedResult.outputFile), transcriptFilename);
-            require('fs').writeFileSync(transcriptPath, transcript.text);
-
-            // Create download link for transcript
-            transcriptUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
-            transcriptStats = transcript.metadata;
-
-            logger.info(`Generated transcript with ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments`);
-
-            // Generate title and brief summary from transcript content
-            try {
-                // Use the recordingId we already calculated
-
-                // Generate title
-                const titleResult = await titleGenerationService.generateTitle(transcript.text);
-                await titleGenerationService.saveTitle(titleResult, recordingId);
-                generatedTitle = titleResult;
-                logger.info(`Generated title: "${titleResult.title}" (slug: ${titleResult.slug})`);
-
-                // Generate brief summary
-                const summaryResult = await summarizationService.summarizeTranscript(transcriptPath, 'brief');
-                briefSummary = summaryResult.summary;
-                logger.info(`Generated brief summary for transcript ${recordingId}`);
-
-            } catch (titleError) {
-                logger.error('Failed to generate title or summary:', titleError);
-                // Generate fallback title
-                try {
-                    const fallbackTitle = titleGenerationService.generateFallbackTitle(recordingId);
-                    await titleGenerationService.saveTitle(fallbackTitle, recordingId);
-                    generatedTitle = fallbackTitle;
-                    logger.info(`Used fallback title: "${fallbackTitle.title}"`);
-                } catch (fallbackError) {
-                    logger.error('Failed to generate fallback title:', fallbackError);
-                }
-            }
-
-            // Build updated response with transcript results
-            const durationMinutes = Math.round(recordingResult.duration / 60000);
-            const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
-
-            let updatedResponse = '🎙️ **Recording Complete!**\n\n';
-
-            // Add title if available
-            if (generatedTitle) {
-                updatedResponse += `📝 **"${generatedTitle.title}"**\n\n`;
-            }
-
-            // Add summary if available
-            if (briefSummary) {
-                const maxSummaryLength = 800;
-                const displaySummary = briefSummary.length > maxSummaryLength
-                    ? briefSummary.substring(0, maxSummaryLength) + '...'
-                    : briefSummary;
-                updatedResponse += `📋 **Summary:**\n${displaySummary}\n\n`;
-            }
-
-            updatedResponse += '🔗 **Links:**\n';
-            updatedResponse += `• 🎵 [Audio Recording](${downloadUrl})\n`;
-
-            // Add transcript info
-            if (transcriptUrl && transcriptStats) {
-                const recordingId = path.basename(recordingResult.outputFile, '.mp3');
-                const webViewerUrl = this.createTranscriptViewerLink(`transcript_${recordingId}.md`);
-                const detailedSummaryUrl = `${config.express.baseUrl}/summary?id=${recordingId}&type=detailed`;
-
-                updatedResponse += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\n`;
-                updatedResponse += `• 📊 [Detailed Summary](${detailedSummaryUrl})\n\n`;
-
-                updatedResponse += `📈 **Stats:** ${transcriptStats.participants.join(', ')} • ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments\n\n`;
-            }
-
-            updatedResponse += '📊 **Recording Details:**\n';
-            updatedResponse += `• Duration: ${durationMinutes} minutes\n`;
-            updatedResponse += `• File size: ${fileSizeMB} MB\n`;
-            updatedResponse += `• Participants: ${recordingResult.participants.length}\n`;
-            updatedResponse += `• Speech segments: ${recordingResult.speechSegments.length}\n\n`;
-            updatedResponse += '⚠️ *Files expire in 24 hours*';
-
-            // Update the original interaction with completed transcript
-            await interaction.editReply({ content: updatedResponse });
-
-        } catch (error) {
-            logger.error('Failed to auto-generate transcript:', error);
-
-            // Update with error message
-            const durationMinutes = Math.round(recordingResult.duration / 60000);
-            const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
-
-            let errorResponse = '🎙️ **Recording Complete!**\n\n';
-            errorResponse += '🔗 **Audio Recording:**\n';
-            errorResponse += `• 🎵 [Download MP3](${downloadUrl})\n\n`;
-            errorResponse += '📊 **Recording Details:**\n';
-            errorResponse += `• Duration: ${durationMinutes} minutes\n`;
-            errorResponse += `• File size: ${fileSizeMB} MB\n`;
-            errorResponse += `• Participants: ${recordingResult.participants.length}\n`;
-            errorResponse += `• Speech segments: ${recordingResult.speechSegments ? recordingResult.speechSegments.length : 0}\n\n`;
-            errorResponse += '⚠️ **Transcript:** Generation failed, but you can try /transcribe later\n\n';
-            errorResponse += '⚠️ *Files expire in 24 hours*';
-
-            await interaction.editReply({ content: errorResponse });
-        }
-    }
 }
 
 module.exports = CommandHandler;
