@@ -137,17 +137,17 @@ class CommandHandler {
             logger.info(`Join command received from user ${interaction.user.username} in guild ${interaction.guild.id}`);
             logger.info(`Interaction details: id=${interaction.id}, token present=${!!interaction.token}, deferred=${interaction.deferred}, replied=${interaction.replied}`);
             
-            // Validate user is in voice channel before deferring
+            // IMMEDIATELY defer reply to prevent timeout
+            await interaction.deferReply({ flags: 1 << 6 }); // InteractionResponseFlags.Ephemeral
+            logger.info(`Join command: Successfully deferred reply`);
+            
+            // Then validate user is in voice channel
             if (!interaction.member.voice.channel) {
-                await interaction.reply({
-                    content: '❌ You must be in a voice channel to start recording!',
-                    flags: 1 << 6
+                await interaction.editReply({
+                    content: '❌ You must be in a voice channel to start recording!'
                 });
                 return;
             }
-
-            await interaction.deferReply({ flags: 1 << 6 }); // InteractionResponseFlags.Ephemeral
-            logger.info(`Join command: Successfully deferred reply`);
 
             const guildId = interaction.guild.id;
             const channelName = interaction.member.voice.channel.name;
