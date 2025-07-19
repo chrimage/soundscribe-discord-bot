@@ -15,7 +15,7 @@ function loadCommands(dependencies = {}) {
         
         if ('data' in command && 'execute' in command) {
             // For commands that need dependencies, wrap the execute function
-            if (['stop', 'transcribe'].includes(command.data.name)) {
+            if (['stop', 'transcribe', 'join', 'summarize', 'list', 'last_recording'].includes(command.data.name)) {
                 commands.set(command.data.name, {
                     data: command.data,
                     execute: (interaction) => command.execute(interaction, dependencies)
