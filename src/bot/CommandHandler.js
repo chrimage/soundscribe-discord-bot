@@ -21,6 +21,16 @@ class CommandHandler {
         this.setupAutocomplete();
     }
 
+    // Helper function to add timeout to operations
+    withTimeout(promise, timeoutMs, operation = 'Operation') {
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs/1000}s`)), timeoutMs)
+            )
+        ]);
+    }
+
     // Helper to create web viewer link for transcript
     createTranscriptViewerLink(transcriptFilename) {
         const recordingId = transcriptFilename.replace('transcript_', '').replace('.md', '');
@@ -102,6 +112,20 @@ class CommandHandler {
                 .setDescription('List available recordings and transcripts'),
             execute: this.handleList.bind(this)
         });
+
+        this.commands.set('help', {
+            data: new SlashCommandBuilder()
+                .setName('help')
+                .setDescription('Show help information about bot commands'),
+            execute: this.handleHelp.bind(this)
+        });
+
+        this.commands.set('invite', {
+            data: new SlashCommandBuilder()
+                .setName('invite')
+                .setDescription('Get the bot invite link'),
+            execute: this.handleInvite.bind(this)
+        });
     }
 
     async registerCommands() {
@@ -138,7 +162,7 @@ class CommandHandler {
             logger.info(`Interaction details: id=${interaction.id}, token present=${!!interaction.token}, deferred=${interaction.deferred}, replied=${interaction.replied}`);
             
             // IMMEDIATELY defer reply to prevent timeout
-            await interaction.deferReply({ flags: 1 << 6 }); // InteractionResponseFlags.Ephemeral
+            await interaction.deferReply({ ephemeral: true });
             logger.info(`Join command: Successfully deferred reply`);
             
             // Then validate user is in voice channel
@@ -175,7 +199,7 @@ class CommandHandler {
                 } else {
                     await interaction.reply({
                         content: `❌ Failed to start recording: ${error.message}`,
-                        flags: 1 << 6
+                        ephemeral: true
                     });
                 }
             } catch (interactionError) {
@@ -186,7 +210,7 @@ class CommandHandler {
 
     async handleStop(interaction) {
         try {
-            await interaction.deferReply({ flags: 1 << 6 }); // Use new ephemeral flag format
+            await interaction.deferReply({ ephemeral: true });
 
             const guildId = interaction.guild.id;
             logger.info(`Stop command: Attempting to stop recording for guild ${guildId}`);
@@ -392,8 +416,12 @@ class CommandHandler {
                             content: `🤖 Found continuous recording files. Starting transcription of ${userFiles.length} user recordings...\n\n⏳ This may take a few moments.`
                         });
 
-                        // Transcribe the continuous files
-                        const transcriptionResults = await transcriptionService.transcribeSegments(userFiles);
+                        // Transcribe the continuous files with timeout
+                        const transcriptionResults = await this.withTimeout(
+                            transcriptionService.transcribeSegments(userFiles),
+                            120000,
+                            'Transcription'
+                        );
 
                         // Format the transcript
                         const transcript = transcriptionService.formatTranscript(transcriptionResults);
@@ -489,8 +517,12 @@ class CommandHandler {
                 content: `🤖 Starting transcription of ${validSegments.length} speech segments...\n\n⏳ This may take a few moments depending on the amount of audio.`
             });
 
-            // Transcribe the segments
-            const transcriptionResults = await transcriptionService.transcribeSegments(validSegments);
+            // Transcribe the segments with timeout
+            const transcriptionResults = await this.withTimeout(
+                transcriptionService.transcribeSegments(validSegments),
+                120000,
+                'Transcription'
+            );
 
             // Format the transcript
             const transcript = transcriptionService.formatTranscript(transcriptionResults);
@@ -554,7 +586,7 @@ class CommandHandler {
     async handlePing(interaction) {
         await interaction.reply({
             content: `🏓 Pong! Bot latency: ${this.client.ws.ping}ms`,
-            flags: 1 << 6 // InteractionResponseFlags.Ephemeral
+            ephemeral: true
         });
     }
 
@@ -828,12 +860,23 @@ class CommandHandler {
             return;
         }
 
+        // Validate guild context for voice commands
+        if (['join', 'stop', 'transcribe'].includes(interaction.commandName)) {
+            if (!interaction.guild) {
+                await interaction.reply({
+                    content: '❌ This command can only be used in servers.',
+                    ephemeral: true
+                });
+                return;
+            }
+        }
+
         try {
             await command.execute(interaction);
         } catch (error) {
             logger.error(`Error executing command ${interaction.commandName}:`, error);
 
-            const response = { content: '❌ An error occurred while executing this command.', flags: 1 << 6 }; // InteractionResponseFlags.Ephemeral
+            const response = { content: '❌ An error occurred while executing this command.', ephemeral: true };
 
             try {
                 if (interaction.deferred || interaction.replied) {
@@ -1014,6 +1057,70 @@ class CommandHandler {
                 logger.error('Failed to update interaction with error:', updateError);
             }
         }
+    }
+
+    async handleHelp(interaction) {
+        await interaction.reply({
+            content: `🤖 **SoundScribe Bot Commands**
+
+**Recording Commands:**
+• \`/join\` - Join your voice channel and start recording
+• \`/stop\` - Stop recording and process the audio
+• \`/transcribe\` - Manually generate transcript from last recording
+
+**Content Commands:**
+• \`/summarize [type] [transcript]\` - Generate summary (brief/detailed/key_points)
+• \`/list\` - List available recordings and transcripts
+• \`/last_recording\` - Get download link for most recent recording
+
+**Utility Commands:**
+• \`/ping\` - Test bot responsiveness
+• \`/invite\` - Get bot invite link
+• \`/help\` - Show this help message
+
+**How to use:**
+1. Join a voice channel
+2. Use \`/join\` to start recording
+3. Use \`/stop\` when finished
+4. Use \`/summarize\` to create summaries
+
+**Note:** All commands work in servers only. Files are automatically deleted after 24 hours.`,
+            ephemeral: true
+        });
+    }
+
+    async handleInvite(interaction) {
+        const { PermissionsBitField } = require('discord.js');
+        
+        const permissions = new PermissionsBitField([
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.Connect,
+            PermissionsBitField.Flags.Speak,
+            PermissionsBitField.Flags.UseVAD,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.EmbedLinks,
+            PermissionsBitField.Flags.UseApplicationCommands
+        ]);
+
+        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${this.client.user.id}&permissions=${permissions.bitfield}&scope=bot%20applications.commands`;
+
+        await interaction.reply({
+            content: `🔗 **Invite SoundScribe to your server:**
+
+${inviteUrl}
+
+**Required Permissions:**
+• View Channel
+• Connect (to voice channels)
+• Speak (in voice channels)
+• Use Voice Activity
+• Send Messages
+• Embed Links
+• Use Slash Commands
+
+Click the link above to add SoundScribe to your server!`,
+            ephemeral: true
+        });
     }
 
 }
