@@ -152,36 +152,18 @@ class CommandHandler {
             const guildId = interaction.guild.id;
             const channelName = interaction.member.voice.channel.name;
 
-            // Immediately update with connecting status
+            // IMMEDIATE response - don't wait for voice connection
             await interaction.editReply({
-                content: `🔄 Connecting to voice channel ${channelName}...`
+                content: `🔄 Connecting to voice channel ${channelName}...\n\nThis may take a few moments.`
             });
 
-            // Start recording with timeout handling
-            const connectionTimeout = setTimeout(async () => {
-                try {
-                    await interaction.editReply({
-                        content: `⚠️ Voice connection taking longer than expected. Please try again or check if the bot has proper permissions in ${channelName}.`
-                    });
-                } catch (timeoutError) {
-                    logger.error('Failed to update interaction after timeout:', timeoutError);
-                }
-            }, 8000); // 8 second timeout warning
-
-            try {
-                logger.info(`Join command: Starting recording for guild ${guildId}`);
-                const _recordingSession = await voiceRecorder.startRecording(interaction);
-                
-                clearTimeout(connectionTimeout);
-                logger.info(`Join command: Recording started successfully for guild ${guildId}`);
-
-                await interaction.editReply({
-                    content: `🎙️ Started recording in ${channelName}! Use /stop to finish recording.`
+            // Do voice connection in background without blocking response
+            this.startRecordingAsync(interaction, guildId, channelName)
+                .catch(error => {
+                    logger.error('Background voice connection failed:', error);
                 });
-            } catch (recordingError) {
-                clearTimeout(connectionTimeout);
-                throw recordingError; // Re-throw to be caught by outer catch
-            }
+
+            logger.info(`Join command: Responded immediately, starting background connection for guild ${guildId}`);
 
         } catch (error) {
             logger.error('Error in join command:', error);
@@ -1007,6 +989,30 @@ class CommandHandler {
         } catch (error) {
             logger.error('Error in summarize autocomplete:', error);
             await interaction.respond([]);
+        }
+    }
+
+    async startRecordingAsync(interaction, guildId, channelName) {
+        try {
+            const recordingSession = await voiceRecorder.startRecording(interaction);
+            
+            // Update with success
+            await interaction.editReply({
+                content: `🎙️ Started recording in ${channelName}! Use /stop to finish recording.`
+            });
+            
+            logger.info(`Background recording started successfully for guild ${guildId}`);
+        } catch (error) {
+            logger.error(`Background recording failed for guild ${guildId}:`, error);
+            
+            // Update with error
+            try {
+                await interaction.editReply({
+                    content: `❌ Failed to start recording: ${error.message}\n\nTry the /join command again.`
+                });
+            } catch (updateError) {
+                logger.error('Failed to update interaction with error:', updateError);
+            }
         }
     }
 
