@@ -1,6 +1,12 @@
 const dotenv = require('dotenv');
 
-dotenv.config();
+// Only load .env file if not in production (Docker provides env vars directly)
+if (process.env.NODE_ENV !== 'production') {
+    console.log('Loading .env file for development');
+    dotenv.config();
+} else {
+    console.log('Production mode: using environment variables from docker-compose');
+}
 
 const requiredEnvVars = [
     'DISCORD_BOT_TOKEN',
@@ -8,12 +14,16 @@ const requiredEnvVars = [
 ];
 
 function validateEnv() {
+    console.log('Environment check - NODE_ENV:', process.env.NODE_ENV);
+    console.log('DISCORD_BOT_TOKEN present:', !!process.env.DISCORD_BOT_TOKEN);
+    console.log('GROQ_API_KEY present:', !!process.env.GROQ_API_KEY);
+    
     const missing = requiredEnvVars.filter(varName => !process.env[varName]);
 
     if (missing.length > 0) {
         console.error('Missing required environment variables:', missing.join(', '));
         console.error('Please copy .env.example to .env and fill in the required values');
-        throw new Error('DISCORD_TOKEN is required');
+        throw new Error(`Missing environment variables: ${missing.join(', ')}`);
     }
 }
 

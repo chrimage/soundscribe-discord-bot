@@ -1,328 +1,269 @@
 const fs = require('fs');
-const _path = require('path');
 const FormData = require('form-data');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
 const config = require('../config');
 const logger = require('../utils/logger');
-const { TRANSCRIPTION, ERROR_MESSAGES } = require('../constants');
 
 class TranscriptionService {
     constructor() {
         this.groqApiKey = config.groq.apiKey;
-        this.groqBaseUrl = 'https://api.groq.com/openai/v1';
+        this.groqApiUrl = 'https://api.groq.com/openai/v1/audio/transcriptions';
 
         if (!this.groqApiKey) {
-            logger.warn('GROQ_API_KEY not found in environment variables');
+            throw new Error('Groq API key not configured');
         }
     }
 
-    async transcribeSegments(speechSegments) {
-        if (!this.groqApiKey) {
-            throw new Error(ERROR_MESSAGES.TRANSCRIPTION.API_KEY_MISSING);
-        }
+    async transcribeSpeechSegments(speechSegments, userFiles) {
+        logger.info(`Starting transcription for ${speechSegments.length} speech segments`);
 
-        const transcriptionResults = [];
-
-        logger.info(`Starting transcription of ${speechSegments.length} speech segments`);
+        const transcripts = [];
 
         for (const segment of speechSegments) {
             try {
-                logger.info(`Transcribing segment ${segment.segmentId} for ${segment.displayName}`);
-
-                // Convert PCM to WAV for Groq API
-                const wavFile = await this.convertPcmToWav(segment.filename);
-
-                // Check file size (Groq API limit)
-                const fileStats = fs.statSync(wavFile);
-                if (fileStats.size > TRANSCRIPTION.MAX_FILE_SIZE_BYTES) {
-                    logger.warn(`Segment ${segment.segmentId} too large (${fileStats.size} bytes), skipping`);
-                    transcriptionResults.push({
-                        ...segment,
-                        transcription: '[Audio segment too large for transcription]',
-                        error: ERROR_MESSAGES.TRANSCRIPTION.FILE_TOO_LARGE
-                    });
+                // Find the corresponding user file
+                const userFile = userFiles.find(file => file.userId === segment.userId);
+                if (!userFile) {
+                    logger.warn(`No audio file found for user ${segment.username} in segment`);
                     continue;
                 }
 
-                // Skip very small files (likely silence)
-                if (fileStats.size < TRANSCRIPTION.MIN_FILE_SIZE_BYTES) {
-                    logger.debug(`Segment ${segment.segmentId} too small (${fileStats.size} bytes), skipping`);
-                    transcriptionResults.push({
-                        ...segment,
-                        transcription: '[Audio segment too small]',
-                        error: ERROR_MESSAGES.TRANSCRIPTION.FILE_TOO_SMALL
+                // Extract audio segment with padding for better Whisper accuracy
+                const paddingMs = 500; // Add 500ms padding on each side
+                const paddedStart = Math.max(0, segment.relativeStart - paddingMs);
+                const paddedDuration = segment.duration + (2 * paddingMs);
+                
+                const segmentAudio = await this.extractAudioSegment(
+                    userFile.filepath,
+                    paddedStart,
+                    paddedDuration
+                );
+
+                // Transcribe the segment
+                const transcription = await this.transcribeAudioFile(segmentAudio, segment.username);
+
+                if (transcription && transcription.trim()) {
+                    transcripts.push({
+                        speaker: segment.displayName || segment.username,
+                        speakerId: segment.userId,
+                        text: transcription.trim(),
+                        timestamp: segment.startTime,
+                        duration: segment.duration,
+                        relativeStart: segment.relativeStart,
+                        relativeEnd: segment.relativeEnd
                     });
-                    continue;
+
+                    logger.debug(`Transcribed segment for ${segment.username}: "${transcription.trim().substring(0, 50)}..."`);
                 }
 
-                // Additional quality check: analyze audio energy before conversion
-                const audioQuality = await this.analyzeAudioQuality(segment.filename);
-                if (audioQuality.avgEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY) {
-                    logger.debug(`Segment ${segment.segmentId} has very low audio energy (${audioQuality.avgEnergy}), skipping`);
-                    transcriptionResults.push({
-                        ...segment,
-                        transcription: '[Low audio energy detected]',
-                        error: ERROR_MESSAGES.TRANSCRIPTION.LOW_AUDIO_ENERGY
-                    });
-                    continue;
-                }
-
-                const transcription = await this.transcribeFile(wavFile);
-
-                transcriptionResults.push({
-                    ...segment,
-                    transcription: transcription.text || '[Transcription failed]',
-                    confidence: transcription.confidence,
-                    language: transcription.language
-                });
-
-                // Clean up WAV file
-                try {
-                    fs.unlinkSync(wavFile);
-                } catch (error) {
-                    logger.error(`Failed to clean up WAV file ${wavFile}:`, error);
+                // Clean up temp segment file
+                if (fs.existsSync(segmentAudio)) {
+                    fs.unlinkSync(segmentAudio);
                 }
 
             } catch (error) {
-                logger.error(`Failed to transcribe segment ${segment.segmentId}:`, error);
-                transcriptionResults.push({
-                    ...segment,
-                    transcription: '[Transcription error]',
-                    error: error.message
-                });
+                logger.error(`Failed to transcribe segment for ${segment.username}:`, error);
+                // Continue with other segments
             }
         }
 
-        return transcriptionResults;
+        logger.info(`Completed transcription: ${transcripts.length}/${speechSegments.length} segments successfully transcribed`);
+        return transcripts;
     }
 
-    async transcribeFile(audioFilePath) {
-        if (!fs.existsSync(audioFilePath)) {
-            throw new Error(`Audio file not found: ${audioFilePath}`);
-        }
+    async extractAudioSegment(pcmFilePath, startMs, durationMs) {
+        return new Promise((resolve, reject) => {
+            const outputPath = pcmFilePath.replace('.pcm', `_segment_${Date.now()}.wav`);
 
-        const formData = new FormData();
-        formData.append('file', fs.createReadStream(audioFilePath));
-        formData.append('model', TRANSCRIPTION.DEFAULT_MODEL);
-        formData.append('language', TRANSCRIPTION.DEFAULT_LANGUAGE);
-        formData.append('response_format', TRANSCRIPTION.RESPONSE_FORMAT);
+            // Extract segment from PCM file and convert to WAV for transcription
+            // Using research-backed Discord PCM specifications
+            ffmpeg()
+                .input(pcmFilePath)
+                .inputFormat('s16le') // 16-bit signed little-endian (Discord standard)
+                .inputOptions([
+                    '-ar 48000',      // 48kHz sample rate
+                    '-ac 2'           // 2 channels stereo (Discord format)
+                ])
+                .seekInput(startMs / 1000) // Start time in seconds
+                .duration(durationMs / 1000) // Duration in seconds
+                .audioCodec('pcm_s16le')
+                .audioFrequency(48000)
+                .audioChannels(1) // Convert to mono for transcription
+                .format('wav')
+                .output(outputPath)
+                .on('end', () => {
+                    resolve(outputPath);
+                })
+                .on('error', (error) => {
+                    logger.error(`FFmpeg PCM segment extraction failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
+    }
 
+    async transcribeAudioFile(audioFilePath, speakerName = 'Unknown') {
         try {
-            const response = await axios.post(`${this.groqBaseUrl}/audio/transcriptions`, formData, {
+            // Check if file exists and has content
+            if (!fs.existsSync(audioFilePath)) {
+                throw new Error(`Audio file not found: ${audioFilePath}`);
+            }
+
+            const stats = fs.statSync(audioFilePath);
+            if (stats.size === 0) {
+                logger.warn(`Empty audio file for ${speakerName}, skipping transcription`);
+                return null;
+            }
+
+            // Prepare form data for Groq API
+            const formData = new FormData();
+            formData.append('file', fs.createReadStream(audioFilePath));
+            formData.append('model', 'whisper-large-v3');
+            formData.append('language', 'en');
+            formData.append('response_format', 'text');
+
+            // Make request to Groq API
+            const response = await axios.post(this.groqApiUrl, formData, {
                 headers: {
                     'Authorization': `Bearer ${this.groqApiKey}`,
                     ...formData.getHeaders()
                 },
-                timeout: TRANSCRIPTION.API_TIMEOUT_MS
+                timeout: 30000
             });
 
-            return {
-                text: response.data.text,
-                language: response.data.language,
-                confidence: this.calculateAverageConfidence(response.data.segments)
-            };
+            const transcription = response.data;
+
+            if (!transcription || transcription.trim() === '') {
+                logger.warn(`Empty transcription received for ${speakerName}`);
+                return null;
+            }
+
+            logger.debug(`Transcription for ${speakerName}: "${transcription.substring(0, 100)}..."`);
+            return transcription;
 
         } catch (error) {
             if (error.response) {
-                logger.error(`Groq API error: ${error.response.status} - ${error.response.data?.error?.message || 'Unknown error'}`);
-                throw new Error(`${ERROR_MESSAGES.TRANSCRIPTION.API_ERROR}: ${error.response.status}`);
-            } else if (error.code === 'ECONNABORTED') {
-                throw new Error(ERROR_MESSAGES.TRANSCRIPTION.API_TIMEOUT);
+                logger.error(`Groq API error for ${speakerName}: ${error.response.status} - ${error.response.data}`);
             } else {
-                throw new Error(`${ERROR_MESSAGES.TRANSCRIPTION.NETWORK_ERROR}: ${error.message}`);
+                logger.error(`Transcription error for ${speakerName}: ${error.message}`);
             }
+            throw error;
         }
     }
 
-    calculateAverageConfidence(segments) {
-        if (!segments || segments.length === 0) {
-            return null;
-        }
-
-        const totalLogProb = segments.reduce((sum, segment) => {
-            return sum + (segment.avg_logprob || -1.0);
-        }, 0);
-
-        const avgLogProb = totalLogProb / segments.length;
-
-        // Convert log probability to percentage confidence
-        // Log probabilities are typically -∞ to 0, where 0 is perfect confidence
-        // We'll convert to 0-100% where -1.0 ≈ 37%, -2.0 ≈ 14%, etc.
-        const confidencePercent = Math.max(0, Math.min(100, Math.exp(avgLogProb) * 100));
-
-        return confidencePercent;
-    }
-
-    async convertPcmToWav(pcmFilePath) {
-        const wavFilePath = pcmFilePath.replace('.pcm', '.wav');
-
-        return new Promise((resolve, reject) => {
-            ffmpeg(pcmFilePath)
-                .inputFormat('s16le') // 16-bit signed little endian
-                .inputOptions([
-                    '-ar 48000', // 48kHz sample rate (Discord's native rate)
-                    '-ac 2'      // 2 channels (stereo)
-                ])
-                .outputFormat('wav')
-                .audioCodec('pcm_s16le')
-                .audioFrequency(16000) // Downsample to 16kHz for Whisper (optimal)
-                .audioChannels(1)      // Convert to mono
-                .on('start', (commandLine) => {
-                    logger.debug(`FFmpeg started: ${commandLine}`);
-                })
-                .on('end', () => {
-                    logger.debug(`Converted ${pcmFilePath} to WAV`);
-                    resolve(wavFilePath);
-                })
-                .on('error', (err) => {
-                    logger.error(`FFmpeg error converting ${pcmFilePath}:`, err);
-                    reject(new Error(`${ERROR_MESSAGES.TRANSCRIPTION.CONVERSION_FAILED}: ${err.message}`));
-                })
-                .save(wavFilePath);
-        });
-    }
-
-    formatTranscript(transcriptionResults) {
-        // Sort segments by start timestamp
-        const sortedResults = transcriptionResults
-            .filter(result => result.transcription && result.transcription !== '[No speech detected]')
-            .sort((a, b) => a.startTimestamp - b.startTimestamp);
-
-        if (sortedResults.length === 0) {
+    formatTranscript(transcripts) {
+        if (!transcripts || transcripts.length === 0) {
             return {
-                text: 'No transcribable speech detected in this recording.',
+                text: '# Transcript\n\nNo speech detected in recording.',
                 metadata: {
-                    totalSegments: transcriptionResults.length,
+                    totalSegments: 0,
                     transcribedSegments: 0,
-                    processingDate: new Date().toISOString()
+                    participants: [],
+                    duration: 0
                 }
             };
         }
 
-        const lines = [];
-        lines.push('# Voice Channel Transcript\n');
+        // Sort transcripts by timestamp to ensure chronological order
+        transcripts.sort((a, b) => a.timestamp - b.timestamp);
 
-        // Add metadata
-        const metadata = this.generateMetadata(transcriptionResults);
-        lines.push(`**Recording Date:** ${metadata.recordingDate}`);
-        lines.push(`**Duration:** ${metadata.totalDuration}`);
-        lines.push(`**Participants:** ${metadata.participants.join(', ')}`);
-        lines.push(`**Total Speech Segments:** ${metadata.transcribedSegments}/${metadata.totalSegments}\n`);
-        lines.push('---\n');
+        let markdown = '# Transcript\n\n';
+        let totalDuration = 0;
+        const participants = new Set();
 
-        // Add transcript
-        for (const result of sortedResults) {
-            const timestamp = new Date(result.startTimestamp).toISOString().substr(11, 8); // HH:MM:SS
-            const speaker = result.displayName || result.username;
-            const confidence = result.confidence ? ` (${result.confidence.toFixed(1)}%)` : '';
+        for (const transcript of transcripts) {
+            const startTime = this.formatTimestamp(transcript.relativeStart);
+            participants.add(transcript.speaker);
+            totalDuration += transcript.duration;
 
-            lines.push(`**[${timestamp}] ${speaker}${confidence}:**`);
-            lines.push(`${result.transcription}\n`);
+            markdown += `**${transcript.speaker}** _(${startTime})_: ${transcript.text}\n\n`;
         }
 
+        const metadata = {
+            totalSegments: transcripts.length,
+            transcribedSegments: transcripts.length,
+            participants: Array.from(participants),
+            duration: totalDuration,
+            generatedAt: new Date().toISOString()
+        };
+
         return {
-            text: lines.join('\n'),
+            text: markdown,
             metadata
         };
     }
 
-    generateMetadata(transcriptionResults) {
-        const participants = [...new Set(transcriptionResults.map(r => r.displayName || r.username))];
-        const transcribedSegments = transcriptionResults.filter(r =>
-            r.transcription &&
-            r.transcription !== '[No speech detected]' &&
-            r.transcription !== '[Transcription error]' &&
-            r.transcription !== '[Audio segment too large for transcription]'
-        ).length;
-
-        const firstTimestamp = Math.min(...transcriptionResults.map(r => r.startTimestamp));
-        const lastTimestamp = Math.max(...transcriptionResults.map(r => r.endTimestamp || r.startTimestamp));
-        const totalDuration = Math.round((lastTimestamp - firstTimestamp) / 1000); // seconds
-
-        return {
-            recordingDate: new Date(firstTimestamp).toISOString(),
-            totalDuration: this.formatDuration(totalDuration),
-            participants,
-            totalSegments: transcriptionResults.length,
-            transcribedSegments,
-            processingDate: new Date().toISOString()
-        };
+    formatTimestamp(milliseconds) {
+        const totalSeconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     }
 
-    formatDuration(seconds) {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
+    // Convert PCM to WAV for transcription
+    async convertPcmToWav(pcmFilePath) {
+        return new Promise((resolve, reject) => {
+            const wavFilePath = pcmFilePath.replace('.pcm', '.wav');
 
-        if (hours > 0) {
-            return `${hours}h ${minutes}m ${secs}s`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${secs}s`;
-        } else {
-            return `${secs}s`;
-        }
+            ffmpeg()
+                .input(pcmFilePath)
+                .inputFormat('s16le')
+                .inputOptions([
+                    '-ar 48000',
+                    '-ac 2'
+                ])
+                .audioCodec('pcm_s16le')
+                .format('wav')
+                .output(wavFilePath)
+                .on('end', () => {
+                    resolve(wavFilePath);
+                })
+                .on('error', (error) => {
+                    logger.error(`PCM to WAV conversion failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
     }
 
-    async analyzeAudioQuality(pcmFilePath) {
-        try {
-            // Check if file exists and is readable
-            if (!fs.existsSync(pcmFilePath)) {
-                throw new Error(`Audio file not found: ${pcmFilePath}`);
+    // For backward compatibility - transcribe full user files
+    async transcribeUserFiles(userFiles) {
+        logger.info(`Starting full file transcription for ${userFiles.length} users`);
+
+        const transcripts = [];
+
+        for (const userFile of userFiles) {
+            try {
+                // Convert PCM to WAV
+                const wavFile = await this.convertPcmToWav(userFile.filepath);
+
+                // Transcribe the full file
+                const transcription = await this.transcribeAudioFile(wavFile, userFile.username);
+
+                if (transcription && transcription.trim()) {
+                    transcripts.push({
+                        speaker: userFile.displayName || userFile.username,
+                        speakerId: userFile.userId,
+                        text: transcription.trim(),
+                        timestamp: Date.now(), // No specific timestamp for full file
+                        duration: 0,
+                        relativeStart: 0,
+                        relativeEnd: 0
+                    });
+                }
+
+                // Clean up WAV file
+                if (fs.existsSync(wavFile)) {
+                    fs.unlinkSync(wavFile);
+                }
+
+            } catch (error) {
+                logger.error(`Failed to transcribe full file for ${userFile.username}:`, error);
             }
-
-            const stats = fs.statSync(pcmFilePath);
-            if (stats.size === 0) {
-                return {
-                    avgEnergy: 0,
-                    peakAmplitude: 0,
-                    sampleCount: 0,
-                    isLikelySilence: true
-                };
-            }
-
-            // Read PCM file in chunks to avoid memory issues with large files
-            const buffer = fs.readFileSync(pcmFilePath);
-            const maxSamplesToAnalyze = 48000; // Analyze max 1 second of audio
-            const bytesToRead = Math.min(buffer.length, maxSamplesToAnalyze * 2);
-
-            // PCM is 16-bit signed little endian, 2 channels (stereo)
-            let sumSquares = 0;
-            let maxAmplitude = 0;
-            let sampleCount = 0;
-
-            for (let i = 0; i < bytesToRead - 1; i += 2) {
-                const sample = buffer.readInt16LE(i) / 32768.0; // Normalize to -1.0 to 1.0
-                const amplitude = Math.abs(sample);
-
-                sumSquares += sample * sample;
-                maxAmplitude = Math.max(maxAmplitude, amplitude);
-                sampleCount++;
-            }
-
-            const rmsEnergy = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
-            const isLikelySilence = rmsEnergy < TRANSCRIPTION.MIN_AUDIO_ENERGY &&
-                                   maxAmplitude < TRANSCRIPTION.MIN_PEAK_AMPLITUDE;
-
-            logger.debug(`Audio quality analysis: RMS=${rmsEnergy.toFixed(4)}, Peak=${maxAmplitude.toFixed(4)}, Samples=${sampleCount}, Silence=${isLikelySilence}`);
-
-            return {
-                avgEnergy: rmsEnergy,
-                peakAmplitude: maxAmplitude,
-                sampleCount,
-                isLikelySilence
-            };
-
-        } catch (error) {
-            logger.error(`Failed to analyze audio quality for ${pcmFilePath}:`, error);
-            // Return permissive values on error so we don't skip potentially valid audio
-            return {
-                avgEnergy: TRANSCRIPTION.MIN_AUDIO_ENERGY + 0.01, // Just above threshold
-                peakAmplitude: TRANSCRIPTION.MIN_PEAK_AMPLITUDE + 0.01,
-                sampleCount: 0,
-                isLikelySilence: false
-            };
         }
+
+        return transcripts;
     }
 }
 

@@ -63,7 +63,8 @@ class SoundScribeBot {
             logger.info('Bot login successful');
 
         } catch (error) {
-            logger.error('Failed to start bot:', error);
+            console.error('Failed to start bot:', error);
+            logger.error('Failed to start bot:', error.message || error.toString());
             throw error;
         }
     }
@@ -136,11 +137,13 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled rejection at:', promise, 'reason:', reason);
     logger.error('Unhandled rejection at:', promise, 'reason:', reason);
 });
 
 // Start the bot
 bot.start().catch(error => {
-    logger.error('Failed to start bot:', error);
+    console.error('Failed to start bot:', error);
+    logger.error('Failed to start bot:', error.message || error.toString());
     throw error;
 });
