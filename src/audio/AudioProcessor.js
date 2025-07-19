@@ -33,9 +33,9 @@ class AudioProcessor {
 
         try {
 
-            // Generate output filename - try WAV instead of OGG
+            // Generate output filename - MP3 for compression
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const outputFile = path.join(config.paths.recordings, `recording_${timestamp}.wav`);
+            const outputFile = path.join(config.paths.recordings, `recording_${timestamp}.mp3`);
 
             // If only one user, convert PCM to WAV
             if (userFiles.length === 1) {
@@ -53,11 +53,11 @@ class AudioProcessor {
                 
                 logger.info(`Converting PCM file: ${userFile.filepath} (${Math.round(pcmStats.size / 1024)}KB)`);
                 
-                // Convert PCM file to WAV using correct Discord format
-                await this.convertPcmToWav(userFile.filepath, outputFile);
+                // Convert PCM file to MP3 for compression
+                await this.convertPcmToMp3(userFile.filepath, outputFile);
 
                 const stats = fs.statSync(outputFile);
-                logger.info(`Created WAV from PCM: ${outputFile} (${Math.round(stats.size / 1024)}KB)`);
+                logger.info(`Created MP3 from PCM: ${outputFile} (${Math.round(stats.size / 1024)}KB)`);
 
                 return {
                     outputFile: outputFile,
@@ -66,8 +66,8 @@ class AudioProcessor {
                 };
             }
 
-            // Multiple users - create mixed audio as WAV from PCM files
-            await this.mixUserAudioFilesToWav(userFiles, outputFile);
+            // Multiple users - create mixed audio as MP3 from PCM files
+            await this.mixUserAudioFilesToMp3(userFiles, outputFile);
 
             const stats = fs.statSync(outputFile);
             logger.info(`Created mixed recording: ${outputFile} (${Math.round(stats.size / 1024)}KB)`);
@@ -100,6 +100,31 @@ class AudioProcessor {
                 })
                 .on('error', (error) => {
                     logger.error(`PCM to WAV conversion failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
+    }
+
+    async convertPcmToMp3(pcmFilePath, outputPath) {
+        // Convert PCM to compressed MP3 format
+        return new Promise((resolve, reject) => {
+            ffmpeg()
+                .input(pcmFilePath)
+                .inputFormat('s16le')
+                .inputOptions(['-ar', '48000', '-ac', '2'])  // STEREO Discord format
+                .audioCodec('libmp3lame')
+                .audioBitrate(config.audio.quality || '192k')  // Use config quality
+                .audioFrequency(48000)
+                .audioChannels(2)
+                .format('mp3')
+                .output(outputPath)
+                .on('end', () => {
+                    logger.debug(`Converted PCM to MP3: ${path.basename(outputPath)}`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    logger.error(`PCM to MP3 conversion failed: ${error.message}`);
                     reject(error);
                 })
                 .run();
@@ -192,6 +217,43 @@ class AudioProcessor {
                 })
                 .on('error', (error) => {
                     logger.error(`PCM WAV mixing failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
+    }
+
+    async mixUserAudioFilesToMp3(userFiles, outputPath) {
+        // Mix multiple PCM files into compressed MP3
+        return new Promise((resolve, reject) => {
+            const command = ffmpeg();
+
+            // Add each user's PCM file as input with Discord format
+            for (const userFile of userFiles) {
+                command.input(userFile.filepath)
+                    .inputFormat('s16le')
+                    .inputOptions(['-ar', '48000', '-ac', '2']);  // STEREO Discord format
+            }
+
+            // Create amix filter for combining all inputs
+            const filterChain = userFiles.length > 1
+                ? `amix=inputs=${userFiles.length}:duration=longest:dropout_transition=0`
+                : 'anull';
+
+            command
+                .complexFilter([filterChain])
+                .audioCodec('libmp3lame')
+                .audioBitrate(config.audio.quality || '192k')
+                .audioFrequency(48000)
+                .audioChannels(2)
+                .format('mp3')
+                .output(outputPath)
+                .on('end', () => {
+                    logger.debug(`Mixed ${userFiles.length} PCM streams into MP3: ${path.basename(outputPath)}`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    logger.error(`PCM MP3 mixing failed: ${error.message}`);
                     reject(error);
                 })
                 .run();
