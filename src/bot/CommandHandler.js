@@ -149,21 +149,39 @@ class CommandHandler {
             await interaction.deferReply({ flags: 1 << 6 }); // InteractionResponseFlags.Ephemeral
             logger.info(`Join command: Successfully deferred reply`);
 
+            const guildId = interaction.guild.id;
+            const channelName = interaction.member.voice.channel.name;
+
             // Immediately update with connecting status
             await interaction.editReply({
-                content: `🔄 Connecting to voice channel ${interaction.member.voice.channel.name}...`
+                content: `🔄 Connecting to voice channel ${channelName}...`
             });
 
-            const guildId = interaction.guild.id;
-            logger.info(`Join command: Starting recording for guild ${guildId}`);
+            // Start recording with timeout handling
+            const connectionTimeout = setTimeout(async () => {
+                try {
+                    await interaction.editReply({
+                        content: `⚠️ Voice connection taking longer than expected. Please try again or check if the bot has proper permissions in ${channelName}.`
+                    });
+                } catch (timeoutError) {
+                    logger.error('Failed to update interaction after timeout:', timeoutError);
+                }
+            }, 8000); // 8 second timeout warning
 
-            const _recordingSession = await voiceRecorder.startRecording(interaction);
+            try {
+                logger.info(`Join command: Starting recording for guild ${guildId}`);
+                const _recordingSession = await voiceRecorder.startRecording(interaction);
+                
+                clearTimeout(connectionTimeout);
+                logger.info(`Join command: Recording started successfully for guild ${guildId}`);
 
-            logger.info(`Join command: Recording started successfully for guild ${guildId}`);
-
-            await interaction.editReply({
-                content: `🎙️ Started recording in ${interaction.member.voice.channel.name}! Use /stop to finish recording.`
-            });
+                await interaction.editReply({
+                    content: `🎙️ Started recording in ${channelName}! Use /stop to finish recording.`
+                });
+            } catch (recordingError) {
+                clearTimeout(connectionTimeout);
+                throw recordingError; // Re-throw to be caught by outer catch
+            }
 
         } catch (error) {
             logger.error('Error in join command:', error);
