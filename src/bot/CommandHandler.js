@@ -10,6 +10,7 @@ const summarizationService = require('../services/SummarizationService');
 const titleGenerationService = require('../services/TitleGenerationService');
 const BackgroundJobManager = require('./BackgroundJobManager');
 const { _COMMANDS, _ERROR_MESSAGES } = require('../constants');
+const { loadCommands } = require('../commands');
 
 class CommandHandler {
     constructor(client, expressServer) {
@@ -50,6 +51,23 @@ class CommandHandler {
     }
 
     setupCommands() {
+        // Load external commands with dependency injection
+        const dependencies = {
+            voiceRecorder,
+            audioProcessor,
+            fileManager,
+            transcriptionService,
+            titleGenerationService,
+            expressServer: this.expressServer,
+            backgroundJobManager: this.backgroundJobManager
+        };
+        
+        const externalCommands = loadCommands(dependencies);
+        for (const [name, command] of externalCommands) {
+            this.commands.set(name, command);
+        }
+
+        // Then add internal commands that need access to class methods
         this.commands.set('join', {
             data: new SlashCommandBuilder()
                 .setName('join')
@@ -57,32 +75,11 @@ class CommandHandler {
             execute: this.handleJoin.bind(this)
         });
 
-        this.commands.set('stop', {
-            data: new SlashCommandBuilder()
-                .setName('stop')
-                .setDescription('Stop recording and process the audio'),
-            execute: this.handleStop.bind(this)
-        });
-
         this.commands.set('last_recording', {
             data: new SlashCommandBuilder()
                 .setName('last_recording')
                 .setDescription('Get a download link for your most recent recording'),
             execute: this.handleLastRecording.bind(this)
-        });
-
-        this.commands.set('transcribe', {
-            data: new SlashCommandBuilder()
-                .setName('transcribe')
-                .setDescription('Manually generate transcript from the last recording (if auto-transcription failed)'),
-            execute: this.handleTranscribe.bind(this)
-        });
-
-        this.commands.set('ping', {
-            data: new SlashCommandBuilder()
-                .setName('ping')
-                .setDescription('Test if the bot is responsive'),
-            execute: this.handlePing.bind(this)
         });
 
         this.commands.set('summarize', {
@@ -111,20 +108,6 @@ class CommandHandler {
                 .setName('list')
                 .setDescription('List available recordings and transcripts'),
             execute: this.handleList.bind(this)
-        });
-
-        this.commands.set('help', {
-            data: new SlashCommandBuilder()
-                .setName('help')
-                .setDescription('Show help information about bot commands'),
-            execute: this.handleHelp.bind(this)
-        });
-
-        this.commands.set('invite', {
-            data: new SlashCommandBuilder()
-                .setName('invite')
-                .setDescription('Get the bot invite link'),
-            execute: this.handleInvite.bind(this)
         });
     }
 
@@ -208,113 +191,6 @@ class CommandHandler {
         }
     }
 
-    async handleStop(interaction) {
-        try {
-            await interaction.deferReply({ ephemeral: true });
-
-            const guildId = interaction.guild.id;
-            logger.info(`Stop command: Attempting to stop recording for guild ${guildId}`);
-
-            // Check if recording is active before trying to stop
-            if (!voiceRecorder.isRecordingActive(guildId)) {
-                logger.warn(`Stop command: No active recording found for guild ${guildId}`);
-                logger.info(`Stop command: Active recordings: ${JSON.stringify(voiceRecorder.getAllActiveRecordings())}`);
-
-                await interaction.editReply({
-                    content: '❌ No active recording found. Use /join to start a recording first.'
-                });
-                return;
-            }
-
-            // Immediately update with processing status
-            await interaction.editReply({
-                content: '🔄 Stopping recording and processing audio...'
-            });
-
-            const recordingResult = await voiceRecorder.stopRecording(guildId);
-
-            // Check if any audio was captured
-            if (!recordingResult.userFiles || recordingResult.userFiles.length === 0) {
-                const durationMinutes = Math.round(recordingResult.duration / 60000);
-
-                await interaction.editReply({
-                    content: '⚠️ **No audio captured**\n\n' +
-                            '📊 **Recording Details:**\n' +
-                            `• Duration: ${durationMinutes} minutes\n` +
-                            `• Participants: ${recordingResult.participants.length}\n` +
-                            '• Audio files: 0\n\n' +
-                            '💡 **Possible reasons:**\n' +
-                            '• No one spoke during recording\n' +
-                            '• Microphones were muted\n' +
-                            '• Voice activity detection threshold not met\n' +
-                            '• Bot permissions issue\n\n' +
-                            'Try recording again and make sure someone speaks clearly.'
-                });
-                return;
-            }
-
-            // FAST operations only - process audio immediately  
-            const processedResult = await audioProcessor.createMixedRecording(recordingResult);
-
-            // Generate immediate response with audio download
-            const fileName = path.basename(processedResult.outputFile);
-            const downloadUrl = this.expressServer.createTemporaryUrl(fileName);
-            const durationMinutes = Math.round(recordingResult.duration / 60000);
-            const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
-
-            // Check if we have speech segments for transcription
-            const canTranscribe = recordingResult.speechSegments && recordingResult.speechSegments.length > 0;
-
-            // Respond immediately with audio download
-            let immediateResponse = '🎙️ **Recording Complete!**\n\n';
-            immediateResponse += '🔗 **Audio Recording:**\n';
-            immediateResponse += `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\n\n`;
-            immediateResponse += '📊 **Recording Details:**\n';
-            immediateResponse += `• Duration: ${durationMinutes} minutes\n`;
-            immediateResponse += `• Participants: ${recordingResult.participants.length}\n`;
-            immediateResponse += `• Speech segments: ${recordingResult.speechSegments ? recordingResult.speechSegments.length : 0}\n\n`;
-
-            if (canTranscribe) {
-                immediateResponse += '⏳ **Transcript:** Processing speech segments...\n';
-                immediateResponse += 'I\'ll update this message when transcription is complete!\n\n';
-            } else {
-                immediateResponse += '⚠️ **Transcript:** No speech segments detected\n\n';
-            }
-
-            immediateResponse += '⚠️ *Files expire in 24 hours*';
-
-            await interaction.editReply({ content: immediateResponse });
-
-            // Queue SLOW operations in background (transcription, title, summary)
-            if (canTranscribe) {
-                const recordingId = path.basename(processedResult.outputFile, '.mp3');
-                
-                this.backgroundJobManager.queueTranscription({
-                    recordingData: recordingResult,
-                    processedResult: processedResult,
-                    recordingId: recordingId,
-                    interactionToken: interaction.token,
-                    webhookUrl: `https://discord.com/api/webhooks/${interaction.applicationId}/${interaction.token}`
-                });
-                
-                logger.info(`Queued background transcription for recording ${recordingId}`);
-            }
-
-            // Clean up temp files
-            audioProcessor.cleanupTempFiles(recordingResult.tempDir);
-
-
-        } catch (error) {
-            logger.error('Error in stop command:', error);
-            try {
-                await interaction.editReply({
-                    content: `❌ Failed to stop recording: ${error.message}`
-                });
-            } catch (interactionError) {
-                logger.error('Failed to respond to interaction (may have timed out):', interactionError);
-            }
-        }
-    }
 
     async handleLastRecording(interaction) {
         try {
@@ -350,245 +226,7 @@ class CommandHandler {
         }
     }
 
-    async handleTranscribe(interaction) {
-        try {
-            await interaction.deferReply();
 
-            const guildId = interaction.guild.id;
-
-            // Check if there's an active recording
-            if (voiceRecorder.isRecordingActive(guildId)) {
-                await interaction.editReply({
-                    content: '⚠️ Recording is still in progress. Use /stop first to finish recording, then try /transcribe.'
-                });
-                return;
-            }
-
-            // Find the most recent recording session with speech segments
-            const latestFile = await fileManager.getLatestRecording();
-            if (!latestFile) {
-                await interaction.editReply({
-                    content: '❌ No recordings found. Use /join to start a recording first.'
-                });
-                return;
-            }
-
-            // Look for speech segments metadata file
-            const fs = require('fs');
-            const metadataPath = latestFile.path.replace('.mp3', '_segments.json');
-
-            if (!fs.existsSync(metadataPath)) {
-                // Fallback: try to find continuous user recording files
-                const tempDirPath = latestFile.path.replace('.mp3', '').replace('recordings', 'temp');
-
-                if (fs.existsSync(tempDirPath)) {
-                    const userFiles = fs.readdirSync(tempDirPath)
-                        .filter(file => file.startsWith('user_') && file.endsWith('.pcm'))
-                        .map(filename => {
-                            const filePath = path.join(tempDirPath, filename);
-                            const stats = fs.statSync(filePath);
-
-                            // Skip empty files
-                            if (stats.size < 1000) {
-                                return null;
-                            }
-
-                            // Parse user info from filename: user_userId_username.pcm
-                            const parts = filename.replace('.pcm', '').split('_');
-                            const userId = parts[1];
-                            const username = parts.slice(2).join('_'); // Handle usernames with underscores
-
-                            return {
-                                segmentId: `continuous_${userId}`,
-                                userId,
-                                username,
-                                displayName: username,
-                                startTimestamp: Date.now() - 60000, // Estimate start time
-                                endTimestamp: Date.now(),
-                                duration: 60000, // Estimate duration
-                                filename: filePath
-                            };
-                        })
-                        .filter(Boolean); // Remove null entries
-
-                    if (userFiles.length > 0) {
-                        await interaction.editReply({
-                            content: `🤖 Found continuous recording files. Starting transcription of ${userFiles.length} user recordings...\n\n⏳ This may take a few moments.`
-                        });
-
-                        // Transcribe the continuous files with timeout
-                        const transcriptionResults = await this.withTimeout(
-                            transcriptionService.transcribeSegments(userFiles),
-                            120000,
-                            'Transcription'
-                        );
-
-                        // Format the transcript
-                        const transcript = transcriptionService.formatTranscript(transcriptionResults);
-
-                        // Save transcript to file
-                        const transcriptFilename = `transcript_${Date.now()}.md`;
-                        const transcriptPath = path.join(require('../config').paths.recordings, transcriptFilename);
-                        fs.writeFileSync(transcriptPath, transcript.text);
-
-                        // Generate title for the transcript
-                        let generatedTitle = null;
-                        try {
-                            const transcriptId = transcriptFilename.replace('transcript_', '').replace('.md', '');
-                            const titleResult = await titleGenerationService.generateTitle(transcript.text);
-                            await titleGenerationService.saveTitle(titleResult, transcriptId);
-                            generatedTitle = titleResult;
-                            logger.info(`Generated title for manual transcription: "${titleResult.title}"`);
-                        } catch (titleError) {
-                            logger.error('Failed to generate title for manual transcription:', titleError);
-                            // Generate fallback title
-                            try {
-                                const transcriptId = transcriptFilename.replace('transcript_', '').replace('.md', '');
-                                const fallbackTitle = titleGenerationService.generateFallbackTitle(transcriptId);
-                                await titleGenerationService.saveTitle(fallbackTitle, transcriptId);
-                                generatedTitle = fallbackTitle;
-                            } catch (fallbackError) {
-                                logger.error('Failed to generate fallback title:', fallbackError);
-                            }
-                        }
-
-                        // Create download link and web viewer link
-                        const downloadUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
-                        const webViewerUrl = this.createTranscriptViewerLink(transcriptFilename);
-
-                        let responseContent = '✅ **Transcription completed!**\n\n' +
-                                '📊 **Results:**\n' +
-                                `• Total segments: ${transcript.metadata.totalSegments}\n` +
-                                `• Transcribed segments: ${transcript.metadata.transcribedSegments}\n` +
-                                `• Participants: ${transcript.metadata.participants.join(', ')}\n` +
-                                `• Duration: ${transcript.metadata.totalDuration}\n\n` +
-                                `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${downloadUrl})\n`;
-
-                        if (generatedTitle) {
-                            responseContent += `🏷️ **Title:** "${generatedTitle.title}"\n`;
-                        }
-
-                        responseContent += '\n⚠️ Transcript files are automatically deleted after 24 hours.\n\n' +
-                                '💡 *Note: Used continuous recording mode (speech segmentation not working)*';
-
-                        await interaction.editReply({
-                            content: responseContent
-                        });
-                        return;
-                    }
-                }
-
-                await interaction.editReply({
-                    content: '❌ No speech segments or user recording files found. This recording may not have any audio content.'
-                });
-                return;
-            }
-
-            // Load speech segments metadata
-            let speechSegments;
-            try {
-                const metadataContent = fs.readFileSync(metadataPath, 'utf8');
-                speechSegments = JSON.parse(metadataContent);
-            } catch (error) {
-                logger.error('Failed to parse speech segments metadata:', error);
-                await interaction.editReply({
-                    content: '❌ Failed to load speech segments metadata. The file may be corrupted.'
-                });
-                return;
-            }
-
-            if (!speechSegments || speechSegments.length === 0) {
-                await interaction.editReply({
-                    content: '❌ No speech segments found in the recording. Make sure people spoke during the recording.'
-                });
-                return;
-            }
-
-            // Verify segment files still exist
-            const validSegments = speechSegments.filter(segment => fs.existsSync(segment.filename));
-            if (validSegments.length === 0) {
-                await interaction.editReply({
-                    content: '❌ Speech segment files not found. They may have been cleaned up or moved.'
-                });
-                return;
-            }
-
-            await interaction.editReply({
-                content: `🤖 Starting transcription of ${validSegments.length} speech segments...\n\n⏳ This may take a few moments depending on the amount of audio.`
-            });
-
-            // Transcribe the segments with timeout
-            const transcriptionResults = await this.withTimeout(
-                transcriptionService.transcribeSegments(validSegments),
-                120000,
-                'Transcription'
-            );
-
-            // Format the transcript
-            const transcript = transcriptionService.formatTranscript(transcriptionResults);
-
-            // Save transcript to file
-            const transcriptFilename = `transcript_${Date.now()}.md`;
-            const transcriptPath = require('path').join(require('../config').paths.recordings, transcriptFilename);
-            fs.writeFileSync(transcriptPath, transcript.text);
-
-            // Generate title for the transcript
-            let generatedTitle = null;
-            try {
-                const transcriptId = transcriptFilename.replace('transcript_', '').replace('.md', '');
-                const titleResult = await titleGenerationService.generateTitle(transcript.text);
-                await titleGenerationService.saveTitle(titleResult, transcriptId);
-                generatedTitle = titleResult;
-                logger.info(`Generated title for manual transcription: "${titleResult.title}"`);
-            } catch (titleError) {
-                logger.error('Failed to generate title for manual transcription:', titleError);
-                // Generate fallback title
-                try {
-                    const transcriptId = transcriptFilename.replace('transcript_', '').replace('.md', '');
-                    const fallbackTitle = titleGenerationService.generateFallbackTitle(transcriptId);
-                    await titleGenerationService.saveTitle(fallbackTitle, transcriptId);
-                    generatedTitle = fallbackTitle;
-                } catch (fallbackError) {
-                    logger.error('Failed to generate fallback title:', fallbackError);
-                }
-            }
-
-            // Create download link and web viewer link
-            const downloadUrl = this.expressServer.createTemporaryUrl(transcriptFilename);
-            const webViewerUrl = this.createTranscriptViewerLink(transcriptFilename);
-
-            let responseContent = '✅ **Transcription completed!**\n\n' +
-                    '📊 **Results:**\n' +
-                    `• Total segments: ${transcript.metadata.totalSegments}\n` +
-                    `• Transcribed segments: ${transcript.metadata.transcribedSegments}\n` +
-                    `• Participants: ${transcript.metadata.participants.join(', ')}\n` +
-                    `• Duration: ${transcript.metadata.totalDuration}\n\n` +
-                    `📄 **Transcript:** [View Online](${webViewerUrl}) | [Download](${downloadUrl})\n`;
-
-            if (generatedTitle) {
-                responseContent += `🏷️ **Title:** "${generatedTitle.title}"\n`;
-            }
-
-            responseContent += '\n⚠️ Transcript files are automatically deleted after 24 hours.';
-
-            await interaction.editReply({
-                content: responseContent
-            });
-
-        } catch (error) {
-            logger.error('Error in transcribe command:', error);
-            await interaction.editReply({
-                content: `❌ Failed to generate transcript: ${error.message}`
-            });
-        }
-    }
-
-    async handlePing(interaction) {
-        await interaction.reply({
-            content: `🏓 Pong! Bot latency: ${this.client.ws.ping}ms`,
-            ephemeral: true
-        });
-    }
 
     async handleList(interaction) {
         try {
@@ -1059,69 +697,6 @@ class CommandHandler {
         }
     }
 
-    async handleHelp(interaction) {
-        await interaction.reply({
-            content: `🤖 **SoundScribe Bot Commands**
-
-**Recording Commands:**
-• \`/join\` - Join your voice channel and start recording
-• \`/stop\` - Stop recording and process the audio
-• \`/transcribe\` - Manually generate transcript from last recording
-
-**Content Commands:**
-• \`/summarize [type] [transcript]\` - Generate summary (brief/detailed/key_points)
-• \`/list\` - List available recordings and transcripts
-• \`/last_recording\` - Get download link for most recent recording
-
-**Utility Commands:**
-• \`/ping\` - Test bot responsiveness
-• \`/invite\` - Get bot invite link
-• \`/help\` - Show this help message
-
-**How to use:**
-1. Join a voice channel
-2. Use \`/join\` to start recording
-3. Use \`/stop\` when finished
-4. Use \`/summarize\` to create summaries
-
-**Note:** All commands work in servers only. Files are automatically deleted after 24 hours.`,
-            ephemeral: true
-        });
-    }
-
-    async handleInvite(interaction) {
-        const { PermissionsBitField } = require('discord.js');
-        
-        const permissions = new PermissionsBitField([
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.Connect,
-            PermissionsBitField.Flags.Speak,
-            PermissionsBitField.Flags.UseVAD,
-            PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.EmbedLinks,
-            PermissionsBitField.Flags.UseApplicationCommands
-        ]);
-
-        const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${this.client.user.id}&permissions=${permissions.bitfield}&scope=bot%20applications.commands`;
-
-        await interaction.reply({
-            content: `🔗 **Invite SoundScribe to your server:**
-
-${inviteUrl}
-
-**Required Permissions:**
-• View Channel
-• Connect (to voice channels)
-• Speak (in voice channels)
-• Use Voice Activity
-• Send Messages
-• Embed Links
-• Use Slash Commands
-
-Click the link above to add SoundScribe to your server!`,
-            ephemeral: true
-        });
-    }
 
 }
 
