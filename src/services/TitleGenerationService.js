@@ -54,7 +54,10 @@ class TitleGenerationService {
             };
 
         } catch (error) {
-            logger.error('Failed to generate title:', error);
+            logger.error('Failed to generate title:', {
+                error: error.message,
+                stack: error.stack
+            });
             throw error;
         }
     }

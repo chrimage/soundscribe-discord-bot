@@ -1,4 +1,3 @@
-const { WebhookClient } = require('discord.js');
 const path = require('path');
 const fs = require('fs');
 const logger = require('../utils/logger');
@@ -96,7 +95,7 @@ class BackgroundJobManager {
         return this.jobs.get(jobId) || null;
     }
 
-    async processTranscription(jobId, { recordingData, processedResult, interactionToken, webhookUrl, recordingId }) {
+    async processTranscription(jobId, { recordingData, processedResult, interaction, recordingId }) {
         const job = this.jobs.get(jobId);
         if (!job) return;
 
@@ -104,11 +103,8 @@ class BackgroundJobManager {
             job.status = 'processing';
             logger.info(`Starting transcription job ${jobId}`);
 
-            // Create webhook client for updating the original message
-            const webhook = new WebhookClient({ url: webhookUrl });
-
             // Update status: "Transcribing..."
-            await this.updateProgress(webhook, interactionToken, 
+            await this.updateProgress(interaction, 
                 this.buildProgressResponse(processedResult, "🤖 Transcribing speech segments..."));
 
             // Transcribe speech segments
@@ -124,7 +120,7 @@ class BackgroundJobManager {
             require('fs').writeFileSync(transcriptPath, transcript.text);
 
             // Update status: "Generating title..."
-            await this.updateProgress(webhook, interactionToken,
+            await this.updateProgress(interaction,
                 this.buildProgressResponse(processedResult, "📝 Generating title and summary..."));
 
             // Generate title and brief summary
@@ -178,7 +174,7 @@ class BackgroundJobManager {
             );
 
             // Final update with complete results
-            await webhook.editMessage('@original', { content: finalResponse });
+            await this.updateProgress(interaction, finalResponse);
 
             job.status = 'completed';
             job.completedTime = Date.now();
@@ -193,12 +189,12 @@ class BackgroundJobManager {
             logger.error(`Transcription job ${jobId} failed:`, error);
 
             try {
-                const webhook = new WebhookClient({ url: webhookUrl });
-                await webhook.editMessage('@original', {
-                    content: this.buildErrorResponse(processedResult, error.message)
+                await this.updateProgress(interaction, this.buildErrorResponse(processedResult, error.message));
+            } catch (updateError) {
+                logger.error(`Failed to update failed job ${jobId}:`, {
+                    error: updateError.message,
+                    code: updateError.code
                 });
-            } catch (webhookError) {
-                logger.error(`Failed to update failed job ${jobId}:`, webhookError);
             }
 
             // Clean up failed job after 10 minutes
@@ -206,12 +202,20 @@ class BackgroundJobManager {
         }
     }
 
-    async updateProgress(webhook, interactionToken, content) {
+    async updateProgress(interaction, content) {
         try {
-            // Use '@original' to edit the original interaction response
-            await webhook.editMessage('@original', { content });
+            // Use interaction.editReply to update the original response
+            await interaction.editReply({ content });
         } catch (error) {
-            logger.warn('Failed to update job progress:', error.message);
+            // Interaction tokens expire after 15 minutes, so this is expected for long jobs
+            if (error.code === 50027) { // Invalid Webhook Token
+                logger.debug('Interaction token expired - this is normal for jobs longer than 15 minutes');
+            } else {
+                logger.warn('Failed to update job progress:', {
+                    error: error.message,
+                    code: error.code
+                });
+            }
         }
     }
 

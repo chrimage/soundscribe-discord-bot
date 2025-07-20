@@ -1,6 +1,7 @@
 const fs = require('fs');
 const FormData = require('form-data');
 const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
 const config = require('../config');
 const logger = require('../utils/logger');
 const audioProcessor = require('../audio/AudioProcessor');

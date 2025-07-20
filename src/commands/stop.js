@@ -118,8 +118,7 @@ module.exports = {
                 recordingData: recordingResult,
                 processedResult: processedResult,
                 recordingId: recordingId,
-                interactionToken: interaction.token,
-                webhookUrl: `https://discord.com/api/webhooks/${interaction.applicationId}/${interaction.token}`
+                interaction: interaction // Pass the entire interaction object
             });
             
             logger.info(`Queued background transcription for recording ${recordingId}`);
