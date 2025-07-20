@@ -150,9 +150,16 @@ class TranscriptionService {
 
         } catch (error) {
             if (error.response) {
-                logger.error(`Groq API error for ${speakerName}: ${error.response.status} - ${error.response.data}`);
+                logger.error(`Groq API error for ${speakerName}:`, {
+                    status: error.response.status,
+                    data: error.response.data,
+                    headers: error.response.headers
+                });
             } else {
-                logger.error(`Transcription error for ${speakerName}: ${error.message}`);
+                logger.error(`Transcription error for ${speakerName}:`, {
+                    error: error.message,
+                    stack: error.stack
+                });
             }
             throw error;
         }

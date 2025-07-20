@@ -37,25 +37,25 @@ module.exports = {
 
             const recordingResult = await voiceRecorder.stopRecording(guildId);
 
+            // Respond immediately to avoid timeout
+            await interaction.editReply({
+                content: '🔄 Processing recording... This may take a moment.'
+            });
+
             // Check if any audio was captured
             if (!recordingResult.userFiles || recordingResult.userFiles.length === 0) {
                 await this.handleNoAudioCaptured(interaction, recordingResult);
                 return;
             }
 
-            // Process audio and create immediate response
-            const processedResult = await audioProcessor.createMixedRecording(recordingResult);
-            await this.sendImmediateResponse(interaction, recordingResult, processedResult, expressServer);
-
-            // Start background transcription pipeline if possible
-            this.processRecordingPipeline(recordingResult, processedResult, interaction, expressServer);
-
-            // Only clean up temp files if no transcription was queued
-            // Background job will handle cleanup after transcription completes
-            const canTranscribe = recordingResult.speechSegments && recordingResult.speechSegments.length > 0;
-            if (!canTranscribe) {
-                audioProcessor.cleanupTempFiles(recordingResult.tempDir);
-            }
+            // Start complete processing pipeline in background (fire and forget)
+            this.processCompleteRecording(recordingResult, interaction, audioProcessor, expressServer)
+                .catch(error => {
+                    logger.error('Complete recording pipeline failed:', {
+                        error: error.message,
+                        stack: error.stack
+                    });
+                });
 
         } catch (error) {
             logger.error('Error in stop command:', error);
@@ -117,7 +117,49 @@ module.exports = {
         await interaction.editReply({ content: immediateResponse });
     },
 
-    async processRecordingPipeline(recordingResult, processedResult, interaction, expressServer) {
+    async processCompleteRecording(recordingResult, interaction, audioProcessor, expressServer) {
+        const recordingId = `recording_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)}Z`;
+        logger.info(`Starting complete recording pipeline for ${recordingId}`);
+
+        try {
+            // Step 1: Process audio and create MP3
+            await interaction.editReply({
+                content: '🔄 Processing audio and creating MP3...'
+            });
+
+            const processedResult = await audioProcessor.createMixedRecording(recordingResult);
+            
+            // Step 2: Show immediate response with MP3 download
+            await this.sendImmediateResponse(interaction, recordingResult, processedResult, expressServer);
+
+            // Step 3: Continue with transcription pipeline if possible
+            await this.processTranscriptionPipeline(recordingResult, processedResult, interaction, expressServer);
+
+        } catch (error) {
+            logger.error(`Complete recording pipeline failed for ${recordingId}:`, {
+                error: error.message,
+                stack: error.stack
+            });
+
+            try {
+                await interaction.editReply({
+                    content: '❌ **Recording processing failed**\n\n' +
+                            `• Error: ${error.message}\n\n` +
+                            'Please try recording again.'
+                });
+            } catch (updateError) {
+                logger.error('Failed to update failed recording:', updateError);
+            }
+        } finally {
+            // Clean up temp files
+            if (recordingResult.tempDir) {
+                audioProcessor.cleanupTempFiles(recordingResult.tempDir);
+                logger.debug(`Cleaned up temp directory: ${recordingResult.tempDir}`);
+            }
+        }
+    },
+
+    async processTranscriptionPipeline(recordingResult, processedResult, interaction, expressServer) {
         const canTranscribe = recordingResult.speechSegments && recordingResult.speechSegments.length > 0;
         
         if (!canTranscribe) {
@@ -155,20 +197,14 @@ module.exports = {
             let generatedTitle = null;
             let briefSummary = null;
 
+            // Generate title
             try {
-                // Generate title
                 const titleResult = await titleGenerationService.generateTitle(transcript.text);
                 await titleGenerationService.saveTitle(titleResult, recordingId);
                 generatedTitle = titleResult;
                 logger.info(`Generated title: "${titleResult.title}"`);
-
-                // Generate brief summary
-                const summaryResult = await summarizationService.summarizeTranscript(transcriptPath, 'brief');
-                briefSummary = summaryResult.summary;
-                logger.info(`Generated brief summary`);
-
             } catch (titleError) {
-                logger.error(`Failed to generate title/summary:`, {
+                logger.error(`Failed to generate title:`, {
                     error: titleError.message,
                     stack: titleError.stack,
                     recordingId: recordingId
@@ -181,6 +217,20 @@ module.exports = {
                 } catch (fallbackError) {
                     logger.error(`Failed to generate fallback title:`, fallbackError);
                 }
+            }
+
+            // Generate brief summary (separate try/catch)
+            try {
+                const summaryResult = await summarizationService.summarizeTranscript(transcriptPath, 'brief');
+                briefSummary = summaryResult.summary;
+                logger.info(`Generated brief summary`);
+            } catch (summaryError) {
+                logger.error(`Failed to generate summary:`, {
+                    error: summaryError.message,
+                    stack: summaryError.stack,
+                    recordingId: recordingId
+                });
+                // Continue without summary
             }
 
             // Step 6: Build final response and update Discord
@@ -228,10 +278,10 @@ module.exports = {
         const downloadUrl = expressServer.createTemporaryUrl(path.basename(processedResult.outputFile));
         const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
 
-        return '🎙️ **Recording Complete!**\\n\\n' +
-               '🔗 **Audio Recording:**\\n' +
-               `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\\n\\n` +
-               `${statusMessage}\\n\\n` +
+        return '🎙️ **Recording Complete!**\n\n' +
+               '🔗 **Audio Recording:**\n' +
+               `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\n\n` +
+               `${statusMessage}\n\n` +
                '⚠️ *Files expire in 24 hours*';
     },
 
@@ -246,11 +296,11 @@ module.exports = {
         const webViewerUrl = `${config.express.baseUrl}/?id=${recordingId}`;
         const detailedSummaryUrl = `${config.express.baseUrl}/summary?id=${recordingId}&type=detailed`;
 
-        let response = '🎙️ **Recording Complete!**\\n\\n';
+        let response = '🎙️ **Recording Complete!**\n\n';
 
         // Add title if available
         if (generatedTitle) {
-            response += `📝 **"${generatedTitle.title}"**\\n\\n`;
+            response += `📝 **"${generatedTitle.title}"**\n\n`;
         }
 
         // Add summary if available
@@ -259,19 +309,19 @@ module.exports = {
             const displaySummary = briefSummary.length > maxSummaryLength
                 ? briefSummary.substring(0, maxSummaryLength) + '...'
                 : briefSummary;
-            response += `📋 **Summary:**\\n${displaySummary}\\n\\n`;
+            response += `📋 **Summary:**\n${displaySummary}\n\n`;
         }
 
-        response += '🔗 **Links:**\\n';
-        response += `• 🎵 [Audio Recording](${downloadUrl})\\n`;
-        response += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\\n`;
-        response += `• 📊 [Detailed Summary](${detailedSummaryUrl})\\n\\n`;
+        response += '🔗 **Links:**\n';
+        response += `• 🎵 [Audio Recording](${downloadUrl})\n`;
+        response += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\n`;
+        response += `• 📊 [Detailed Summary](${detailedSummaryUrl})\n\n`;
 
-        response += '📊 **Stats:**\\n';
-        response += `• Duration: ${durationMinutes} minutes\\n`;
-        response += `• File size: ${fileSizeMB} MB\\n`;
-        response += `• Participants: ${transcript.metadata.participants.join(', ')}\\n`;
-        response += `• Transcribed: ${transcript.metadata.transcribedSegments}/${transcript.metadata.totalSegments} segments\\n\\n`;
+        response += '📊 **Stats:**\n';
+        response += `• Duration: ${durationMinutes} minutes\n`;
+        response += `• File size: ${fileSizeMB} MB\n`;
+        response += `• Participants: ${transcript.metadata.participants.join(', ')}\n`;
+        response += `• Transcribed: ${transcript.metadata.transcribedSegments}/${transcript.metadata.totalSegments} segments\n\n`;
 
         response += '⚠️ *Files expire in 24 hours*';
 
@@ -282,11 +332,11 @@ module.exports = {
         const downloadUrl = expressServer.createTemporaryUrl(path.basename(processedResult.outputFile));
         const fileSizeMB = Math.round(processedResult.fileSize / 1024 / 1024 * 100) / 100;
 
-        return '🎙️ **Recording Complete!**\\n\\n' +
-               '🔗 **Audio Recording:**\\n' +
-               `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\\n\\n` +
-               '⚠️ **Transcript:** Generation failed, but you can try /transcribe later\\n' +
-               `• Error: ${errorMessage}\\n\\n` +
+        return '🎙️ **Recording Complete!**\n\n' +
+               '🔗 **Audio Recording:**\n' +
+               `• 🎵 [Download MP3](${downloadUrl}) (${fileSizeMB} MB)\n\n` +
+               '⚠️ **Transcript:** Generation failed, but you can try /transcribe later\n' +
+               `• Error: ${errorMessage}\n\n` +
                '⚠️ *Files expire in 24 hours*';
     }
 };

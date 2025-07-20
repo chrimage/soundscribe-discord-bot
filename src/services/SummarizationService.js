@@ -59,7 +59,7 @@ class SummarizationService {
                 error: error.message,
                 stack: error.stack,
                 transcriptPath: transcriptPath,
-                summaryType: summaryType
+                summaryType: type
             });
             throw error;
         }

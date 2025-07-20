@@ -77,6 +77,8 @@ class TitleGenerationService {
         const conversationLines = [];
         let pastHeader = false;
 
+        logger.debug(`Parsing transcript with ${lines.length} lines`);
+
         for (const line of lines) {
             const trimmedLine = line.trim();
             
@@ -93,12 +95,13 @@ class TitleGenerationService {
             if (!pastHeader) continue;
 
             // Parse current format: **username** _(timestamp)_: content
-            if (trimmedLine.startsWith('**') && trimmedLine.includes('**:')) {
+            if (trimmedLine.startsWith('**') && trimmedLine.includes('_:')) {
                 const speakerMatch = trimmedLine.match(/^\*\*(.+?)\*\*\s*_\([\d:]+\)_:\s*(.+)$/);
                 if (speakerMatch) {
                     const speaker = speakerMatch[1];
                     const content = speakerMatch[2];
                     conversationLines.push(`${speaker}: ${content}`);
+                    logger.debug(`Parsed line: ${speaker}: ${content}`);
                 }
             }
             // Also handle legacy format: **[timestamp] username**: content  
@@ -112,7 +115,9 @@ class TitleGenerationService {
             }
         }
 
-        return conversationLines.join('\n');
+        const result = conversationLines.join('\n');
+        logger.debug(`Extracted conversation: "${result}" from ${conversationLines.length} lines`);
+        return result;
     }
 
     /**
