@@ -21,7 +21,8 @@ class TranscriptionService {
 
         const transcripts = [];
 
-        for (const segment of speechSegments) {
+        for (let i = 0; i < speechSegments.length; i++) {
+            const segment = speechSegments[i];
             try {
                 // Find the corresponding user file
                 const userFile = userFiles.find(file => file.userId === segment.userId);
@@ -30,11 +31,22 @@ class TranscriptionService {
                     continue;
                 }
 
+                // Check for overlapping segments to adjust padding
+                const nextSegment = (i + 1 < speechSegments.length) ? speechSegments[i + 1] : null;
+                let endPaddingMs = 500;
+
+                if (nextSegment && nextSegment.userId === segment.userId) {
+                    const timeBetweenSegments = nextSegment.relativeStart - segment.relativeEnd;
+                    if (timeBetweenSegments < 1000) { // Overlap if less than 1s apart
+                        endPaddingMs = Math.floor(timeBetweenSegments / 2); // Use half the gap as padding
+                    }
+                }
+
                 // Extract audio segment with padding for better Whisper accuracy
-                const paddingMs = 500; // Add 500ms padding on each side
-                const paddedStart = Math.max(0, segment.relativeStart - paddingMs);
-                const paddedDuration = segment.duration + (2 * paddingMs);
-                
+                const startPaddingMs = 500;
+                const paddedStart = Math.max(0, segment.relativeStart - startPaddingMs);
+                const paddedDuration = segment.duration + startPaddingMs + endPaddingMs;
+
                 const segmentAudio = await this.extractAudioSegment(
                     userFile.filepath,
                     paddedStart,
@@ -267,7 +279,7 @@ class TranscriptionService {
     // Legacy method for backward compatibility with transcribe command
     async transcribeSegments(audioSources) {
         logger.info(`Starting transcription of ${audioSources.length} audio sources`);
-        
+
         const transcriptionResults = [];
 
         for (const source of audioSources) {

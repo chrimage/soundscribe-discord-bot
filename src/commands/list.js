@@ -8,7 +8,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('list')
         .setDescription('List available recordings and transcripts'),
-    
+
     async execute(interaction, { titleGenerationService, expressServer }) {
         try {
             await interaction.deferReply();

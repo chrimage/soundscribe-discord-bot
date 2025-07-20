@@ -7,7 +7,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('transcribe')
         .setDescription('Manually generate transcript from the last recording (if auto-transcription failed)'),
-    
+
     async execute(interaction, { voiceRecorder, fileManager, transcriptionService, titleGenerationService, expressServer }) {
         try {
             await interaction.deferReply();
@@ -120,7 +120,7 @@ module.exports = {
 
     async transcribeAndRespond(audioSources, isSegmented, interaction, transcriptionService, titleGenerationService, expressServer) {
         const segmentType = isSegmented ? 'speech segments' : 'user recordings';
-        
+
         await interaction.editReply({
             content: `🤖 ${isSegmented ? 'Found' : 'Found continuous recording files. Starting'} transcription of ${audioSources.length} ${segmentType}...\n\n⏳ This may take a few moments${isSegmented ? ' depending on the amount of audio' : ''}.`
         });
@@ -202,7 +202,7 @@ module.exports = {
     withTimeout(promise, timeoutMs, operation = 'Operation') {
         return Promise.race([
             promise,
-            new Promise((_, reject) => 
+            new Promise((_, reject) =>
                 setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs/1000}s`)), timeoutMs)
             )
         ]);

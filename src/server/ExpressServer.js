@@ -178,8 +178,8 @@ class ExpressServer {
                         logger.error('Error generating summary:', {
                             error: error.message,
                             stack: error.stack,
-                            recordingId: recordingId,
-                            summaryType: summaryType
+                            recordingId: transcriptId,
+                            summaryType: type
                         });
                         res.status(500).json({ error: 'Failed to generate summary' });
                     });

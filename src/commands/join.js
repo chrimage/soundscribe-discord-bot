@@ -5,16 +5,16 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('join')
         .setDescription('Join your voice channel and start recording'),
-    
+
     async execute(interaction, { voiceRecorder }) {
         try {
             logger.info(`Join command received from user ${interaction.user.username} in guild ${interaction.guild.id}`);
             logger.info(`Interaction details: id=${interaction.id}, token present=${!!interaction.token}, deferred=${interaction.deferred}, replied=${interaction.replied}`);
-            
+
             // IMMEDIATELY defer reply to prevent timeout
             await interaction.deferReply({ ephemeral: true });
-            logger.info(`Join command: Successfully deferred reply`);
-            
+            logger.info('Join command: Successfully deferred reply');
+
             // Then validate user is in voice channel
             if (!interaction.member.voice.channel) {
                 await interaction.editReply({
@@ -61,16 +61,16 @@ module.exports = {
     async startRecordingAsync(interaction, guildId, channelName, voiceRecorder) {
         try {
             const recordingSession = await voiceRecorder.startRecording(interaction);
-            
+
             // Update with success
             await interaction.editReply({
                 content: `🎙️ Started recording in ${channelName}! Use /stop to finish recording.`
             });
-            
+
             logger.info(`Background recording started successfully for guild ${guildId}`);
         } catch (error) {
             logger.error(`Background recording failed for guild ${guildId}:`, error);
-            
+
             // Update with error
             try {
                 await interaction.editReply({

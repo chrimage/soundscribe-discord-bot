@@ -1,4 +1,4 @@
-const { REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { REST, Routes } = require('discord.js');
 const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
@@ -25,17 +25,12 @@ class CommandHandler {
     withTimeout(promise, timeoutMs, operation = 'Operation') {
         return Promise.race([
             promise,
-            new Promise((_, reject) => 
+            new Promise((_, reject) =>
                 setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs/1000}s`)), timeoutMs)
             )
         ]);
     }
 
-    // Helper to create web viewer link for transcript
-    createTranscriptViewerLink(transcriptFilename) {
-        const recordingId = transcriptFilename.replace('transcript_', '').replace('.md', '');
-        return `${config.express.baseUrl}/?id=${recordingId}`;
-    }
 
     setupAutocomplete() {
         this.client.on('interactionCreate', async (interaction) => {
@@ -60,7 +55,7 @@ class CommandHandler {
             summarizationService,
             expressServer: this.expressServer
         };
-        
+
         const externalCommands = loadCommands(dependencies);
         for (const [name, command] of externalCommands) {
             // Wrap each command with error handling
@@ -135,88 +130,6 @@ class CommandHandler {
         await command.execute(interaction);
     }
 
-    async postRecordingCompletionMessage(interaction, recordingData) {
-        try {
-            // Find the text channel associated with the voice channel
-            const voiceChannel = interaction.member?.voice?.channel;
-            if (!voiceChannel) {
-                logger.warn('No voice channel found for recording completion message');
-                return;
-            }
-
-            // Try to find a text channel with similar name or the general channel
-            const guild = interaction.guild;
-            let textChannel = null;
-
-            // First, try to find a text channel with the same name as voice channel
-            textChannel = guild.channels.cache.find(channel =>
-                channel.type === 0 && // TEXT channel type
-                channel.name.toLowerCase() === voiceChannel.name.toLowerCase()
-            );
-
-            // If not found, try to find "general" or similar
-            if (!textChannel) {
-                textChannel = guild.channels.cache.find(channel =>
-                    channel.type === 0 &&
-                    (channel.name.includes('general') || channel.name.includes('chat') || channel.name.includes('main'))
-                );
-            }
-
-            // If still not found, use the first available text channel
-            if (!textChannel) {
-                textChannel = guild.channels.cache.find(channel => channel.type === 0);
-            }
-
-            if (!textChannel) {
-                logger.warn('No suitable text channel found for recording completion message');
-                return;
-            }
-
-            // Create the public completion message
-            const { recordingId, transcriptId, title, briefSummary, _transcriptPath, _recordingPath, transcriptStats } = recordingData;
-
-            // Generate URLs
-            const recordingUrl = this.expressServer.createTemporaryUrl(`${recordingId}.mp3`);
-            const transcriptUrl = this.expressServer.createTemporaryUrl(`transcript_${transcriptId}.md`);
-            const webViewerUrl = this.createTranscriptViewerLink(`transcript_${transcriptId}.md`);
-            const detailedSummaryUrl = `${config.express.baseUrl}/summary?id=${transcriptId}&type=detailed`;
-
-            // Build the message
-            let message = '🎙️ **Recording Complete!**\n\n';
-
-            if (title) {
-                message += `📝 **"${title}"**\n\n`;
-            }
-
-            if (briefSummary) {
-                // Truncate summary if too long for Discord
-                const maxSummaryLength = 800;
-                const displaySummary = briefSummary.length > maxSummaryLength
-                    ? briefSummary.substring(0, maxSummaryLength) + '...'
-                    : briefSummary;
-                message += `📋 **Summary:**\n${displaySummary}\n\n`;
-            }
-
-            message += '🔗 **Links:**\n';
-            message += `• 🎵 [Audio Recording](${recordingUrl})\n`;
-            message += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\n`;
-            message += `• 📊 [Detailed Summary](${detailedSummaryUrl})\n\n`;
-
-            if (transcriptStats) {
-                message += `📈 **Stats:** ${transcriptStats.participants.join(', ')} • ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments\n\n`;
-            }
-
-            message += '⚠️ *Files expire in 24 hours*';
-
-            // Post the message to the text channel
-            await textChannel.send(message);
-            logger.info(`Posted recording completion message to #${textChannel.name}`);
-
-        } catch (error) {
-            logger.error('Failed to post recording completion message:', error);
-            // Don't throw - this is not critical to the recording process
-        }
-    }
 
     async handleSummarizeAutocomplete(interaction) {
         try {

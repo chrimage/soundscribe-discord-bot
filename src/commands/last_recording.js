@@ -5,7 +5,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('last_recording')
         .setDescription('Get a download link for your most recent recording'),
-    
+
     async execute(interaction, { fileManager, expressServer }) {
         try {
             await interaction.deferReply();

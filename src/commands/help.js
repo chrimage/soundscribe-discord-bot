@@ -4,7 +4,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('help')
         .setDescription('Show help information about bot commands'),
-    
+
     async execute(interaction) {
         await interaction.reply({
             content: `🤖 **SoundScribe Bot Commands**
@@ -32,5 +32,5 @@ module.exports = {
 **Note:** All commands work in servers only. Files are automatically deleted after 24 hours.`,
             ephemeral: true
         });
-    },
+    }
 };

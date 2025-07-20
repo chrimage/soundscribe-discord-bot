@@ -179,14 +179,14 @@ class VoiceRecorder {
 
         } catch (error) {
             logger.error(`Failed to join voice channel (attempt ${retryCount + 1}): ${error.message}`);
-            
+
             // Retry up to 2 times if connection fails
             if (retryCount < 2 && error.message.includes('timeout')) {
-                logger.info(`Retrying voice connection in 2 seconds...`);
+                logger.info('Retrying voice connection in 2 seconds...');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 return this.joinChannel(channel, retryCount + 1);
             }
-            
+
             throw error;
         }
     }
@@ -216,10 +216,10 @@ class VoiceRecorder {
                     logger.warn(`Error closing stream for user ${userId}: ${error.message}`);
                 }
             }
-            
+
             // Very short delay to let files finish writing
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             // Check what files were created
             for (const [userId, streamData] of recordingData.userStreams) {
                 if (fs.existsSync(streamData.filepath)) {
@@ -261,6 +261,14 @@ class VoiceRecorder {
     }
 
     processSpeakingEvents(recordingData) {
+        const rawSegments = this.generateRawSpeechSegments(recordingData);
+        const consolidatedSegments = this.consolidateSpeechSegments(rawSegments, recordingData.startTime);
+
+        logger.info(`Processed ${consolidatedSegments.length} final segments from ${rawSegments.length} raw segments.`);
+        return consolidatedSegments;
+    }
+
+    generateRawSpeechSegments(recordingData) {
         const segments = [];
         const userSpeakingState = new Map(); // userId -> start timestamp
 
@@ -273,36 +281,63 @@ class VoiceRecorder {
             }
 
             if (eventType === 'start') {
-                userSpeakingState.set(userId, timestamp);
+                if (!userSpeakingState.has(userId)) {
+                    userSpeakingState.set(userId, timestamp);
+                }
             } else if (eventType === 'end') {
                 const startTime = userSpeakingState.get(userId);
                 if (startTime) {
-                    const duration = timestamp - startTime;
-
-                    // Only include segments longer than 1500ms (Whisper works better with longer clips)
-                    if (duration > 1500) {
-                        segments.push({
-                            userId,
-                            username: participant.username,
-                            displayName: participant.displayName,
-                            startTime,
-                            endTime: timestamp,
-                            duration,
-                            relativeStart: startTime - recordingData.startTime,
-                            relativeEnd: timestamp - recordingData.startTime
-                        });
-                    }
-
+                    segments.push({
+                        userId,
+                        username: participant.username,
+                        displayName: participant.displayName,
+                        startTime,
+                        endTime: timestamp
+                    });
                     userSpeakingState.delete(userId);
                 }
             }
         }
 
-        // Sort segments by start time for perfect chronological order
+        // Sort segments by start time for chronological order
         segments.sort((a, b) => a.startTime - b.startTime);
-
-        logger.info(`Processed ${segments.length} speech segments from ${recordingData.speakingEvents.length} speaking events`);
         return segments;
+    }
+
+    consolidateSpeechSegments(rawSegments, recordingStartTime) {
+        if (rawSegments.length === 0) {
+            return [];
+        }
+
+        const consolidated = [];
+        let currentSegment = { ...rawSegments[0] };
+
+        for (let i = 1; i < rawSegments.length; i++) {
+            const nextSegment = rawSegments[i];
+            const timeBetween = nextSegment.startTime - currentSegment.endTime;
+
+            // Merge if same speaker and gap is reasonably small (e.g., < 750ms)
+            if (nextSegment.userId === currentSegment.userId && timeBetween < 750) {
+                currentSegment.endTime = nextSegment.endTime; // Extend the current segment
+            } else {
+                // Finish the current segment and start a new one
+                consolidated.push(currentSegment);
+                currentSegment = { ...nextSegment };
+            }
+        }
+        consolidated.push(currentSegment); // Add the last segment
+
+        // Final processing: calculate durations and filter out very short segments
+        const finalSegments = consolidated
+            .map(seg => ({
+                ...seg,
+                duration: seg.endTime - seg.startTime,
+                relativeStart: seg.startTime - recordingStartTime,
+                relativeEnd: seg.endTime - recordingStartTime
+            }))
+            .filter(seg => seg.duration > 1000); // Keep segments longer than 1 second
+
+        return finalSegments;
     }
 
     getUserFiles(recordingData) {

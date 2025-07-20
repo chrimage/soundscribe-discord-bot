@@ -105,7 +105,7 @@ class ErrorHandler {
             } catch (error) {
                 // Convert generic errors to typed errors based on service
                 const typedError = this.convertToTypedError(error, serviceName, operation);
-                
+
                 // Log service error with context
                 logger.error(`Service error: ${serviceName}.${operation}`, {
                     serviceName,
@@ -125,8 +125,8 @@ class ErrorHandler {
      */
     static convertToTypedError(error, serviceName, operation) {
         // If it's already a typed error, return as-is
-        if (error instanceof TranscriptionError || 
-            error instanceof RecordingError || 
+        if (error instanceof TranscriptionError ||
+            error instanceof RecordingError ||
             error instanceof ValidationError) {
             return error;
         }
@@ -135,11 +135,11 @@ class ErrorHandler {
         switch (serviceName) {
             case 'TranscriptionService':
                 return this.convertTranscriptionError(error, operation);
-                
+
             case 'VoiceRecorder':
             case 'AudioProcessor':
                 return this.convertRecordingError(error, operation);
-                
+
             default:
                 // Generic validation error for unknown services
                 return new ValidationError(error.message, 'GENERIC_ERROR', {
@@ -150,25 +150,25 @@ class ErrorHandler {
         }
     }
 
-    static convertTranscriptionError(error, operation) {
+    static convertTranscriptionError(error, _operation) {
         const message = error.message.toLowerCase();
 
         if (message.includes('api key') || message.includes('unauthorized')) {
             return new TranscriptionError('API key missing or invalid', 'API_KEY_MISSING');
         }
-        
+
         if (message.includes('file too large') || message.includes('size')) {
             return new TranscriptionError('Audio file too large for transcription', 'FILE_TOO_LARGE');
         }
-        
+
         if (message.includes('timeout') || message.includes('timed out')) {
             return new TranscriptionError('Transcription request timed out', 'API_TIMEOUT');
         }
-        
+
         if (message.includes('network') || message.includes('connection')) {
             return new TranscriptionError('Network error during transcription', 'NETWORK_ERROR');
         }
-        
+
         if (message.includes('conversion') || message.includes('ffmpeg')) {
             return new TranscriptionError('Audio format conversion failed', 'CONVERSION_FAILED');
         }
@@ -176,25 +176,25 @@ class ErrorHandler {
         return new TranscriptionError(error.message, 'API_ERROR');
     }
 
-    static convertRecordingError(error, operation) {
+    static convertRecordingError(error, _operation) {
         const message = error.message.toLowerCase();
 
         if (message.includes('already recording') || message.includes('already connected')) {
             return new RecordingError('A recording is already in progress', 'ALREADY_RECORDING');
         }
-        
+
         if (message.includes('voice channel') || message.includes('not in voice')) {
             return new RecordingError('User must be in a voice channel', 'NOT_IN_VOICE');
         }
-        
+
         if (message.includes('no recording') || message.includes('not recording')) {
             return new RecordingError('No active recording found', 'NO_ACTIVE_RECORDING');
         }
-        
+
         if (message.includes('no audio') || message.includes('empty')) {
             return new RecordingError('No audio was captured during recording', 'NO_AUDIO_CAPTURED');
         }
-        
+
         if (message.includes('stream') || message.includes('connection')) {
             return new RecordingError('Failed to set up audio recording', 'STREAM_SETUP_FAILED');
         }

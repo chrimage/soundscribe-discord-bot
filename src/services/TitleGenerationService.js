@@ -81,18 +81,22 @@ class TitleGenerationService {
 
         for (const line of lines) {
             const trimmedLine = line.trim();
-            
+
             // Skip empty lines
-            if (!trimmedLine) continue;
-            
+            if (!trimmedLine) {
+                continue;
+            }
+
             // Skip header line
             if (trimmedLine.startsWith('# Transcript')) {
                 pastHeader = true;
                 continue;
             }
-            
+
             // Only process lines after the header
-            if (!pastHeader) continue;
+            if (!pastHeader) {
+                continue;
+            }
 
             // Parse current format: **username** _(timestamp)_: content
             if (trimmedLine.startsWith('**') && trimmedLine.includes('_:')) {
@@ -103,9 +107,8 @@ class TitleGenerationService {
                     conversationLines.push(`${speaker}: ${content}`);
                     logger.debug(`Parsed line: ${speaker}: ${content}`);
                 }
-            }
-            // Also handle legacy format: **[timestamp] username**: content  
-            else if (trimmedLine.startsWith('**[')) {
+            } else if (trimmedLine.startsWith('**[')) {
+                // Also handle legacy format: **[timestamp] username**: content
                 const legacyMatch = trimmedLine.match(/^\*\*\[.*?\]\s*(.+?)(?:\s*\([\d.]+%\))?\*\*:\s*(.+)$/);
                 if (legacyMatch) {
                     const speaker = legacyMatch[1];

@@ -40,17 +40,17 @@ class AudioProcessor {
             // Step 1: PCM → WAV (intermediate format)
             if (userFiles.length === 1) {
                 const userFile = userFiles[0];
-                
+
                 // Check if PCM file exists and has content
                 if (!fs.existsSync(userFile.filepath)) {
                     throw new Error(`PCM file not found: ${userFile.filepath}`);
                 }
-                
+
                 const pcmStats = fs.statSync(userFile.filepath);
                 if (pcmStats.size === 0) {
                     throw new Error(`PCM file is empty: ${userFile.filepath} (0 bytes)`);
                 }
-                
+
                 logger.info(`Processing single PCM file: ${userFile.filepath} (${Math.round(pcmStats.size / 1024)}KB)`);
                 await this.convertPcmToWav(userFile.filepath, wavFile);
             } else {

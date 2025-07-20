@@ -138,21 +138,27 @@ class ConfigService {
     }
 
     parsePort(portStr) {
-        if (!portStr) return 3000;
+        if (!portStr) {
+            return 3000;
+        }
         const port = parseInt(portStr, 10);
         return isNaN(port) ? 3000 : port;
     }
 
     parseDuration(durationStr) {
-        if (!durationStr) return null;
-        
+        if (!durationStr) {
+            return null;
+        }
+
         // Parse formats like "24h", "30m", "1d"
         const match = durationStr.match(/^(\d+)([hmd])$/);
-        if (!match) return null;
-        
+        if (!match) {
+            return null;
+        }
+
         const value = parseInt(match[1], 10);
         const unit = match[2];
-        
+
         switch (unit) {
             case 'h': return value * 60 * 60 * 1000;
             case 'm': return value * 60 * 1000;

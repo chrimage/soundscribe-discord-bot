@@ -5,14 +5,14 @@ const path = require('path');
 function loadCommands(dependencies = {}) {
     const commands = new Map();
 
-    const commandFiles = fs.readdirSync(__dirname).filter(file => 
+    const commandFiles = fs.readdirSync(__dirname).filter(file =>
         file.endsWith('.js') && file !== 'index.js'
     );
 
     for (const file of commandFiles) {
         const filePath = path.join(__dirname, file);
         const command = require(filePath);
-        
+
         if ('data' in command && 'execute' in command) {
             // For commands that need dependencies, wrap the execute function
             if (['stop', 'transcribe', 'join', 'summarize', 'list', 'last_recording'].includes(command.data.name)) {

@@ -21,7 +21,7 @@ module.exports = {
                 .setDescription('Transcript title or "latest" for most recent')
                 .setRequired(false)
                 .setAutocomplete(true)),
-    
+
     async execute(interaction, { summarizationService, expressServer }) {
         try {
             logger.info(`Summarize command started - type: ${interaction.options.getString('type')}, transcript: ${interaction.options.getString('transcript')}`);

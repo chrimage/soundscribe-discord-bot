@@ -11,7 +11,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('stop')
         .setDescription('Stop recording and process the audio'),
-    
+
     async execute(interaction, { voiceRecorder, audioProcessor, expressServer }) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -128,7 +128,7 @@ module.exports = {
             });
 
             const processedResult = await audioProcessor.createMixedRecording(recordingResult);
-            
+
             // Step 2: Show immediate response with MP3 download
             await this.sendImmediateResponse(interaction, recordingResult, processedResult, expressServer);
 
@@ -161,7 +161,7 @@ module.exports = {
 
     async processTranscriptionPipeline(recordingResult, processedResult, interaction, expressServer) {
         const canTranscribe = recordingResult.speechSegments && recordingResult.speechSegments.length > 0;
-        
+
         if (!canTranscribe) {
             logger.info('No speech segments detected, skipping transcription pipeline');
             return;
@@ -173,7 +173,7 @@ module.exports = {
         try {
             // Step 1: Update Discord - "Transcribing..."
             await interaction.editReply({
-                content: this.buildProgressResponse(processedResult, "🤖 Transcribing speech segments...", expressServer)
+                content: this.buildProgressResponse(processedResult, '🤖 Transcribing speech segments...', expressServer)
             });
 
             // Step 2: Transcribe speech segments
@@ -190,7 +190,7 @@ module.exports = {
 
             // Step 4: Update Discord - "Generating title..."
             await interaction.editReply({
-                content: this.buildProgressResponse(processedResult, "📝 Generating title and summary...", expressServer)
+                content: this.buildProgressResponse(processedResult, '📝 Generating title and summary...', expressServer)
             });
 
             // Step 5: Generate title and summary
@@ -202,9 +202,9 @@ module.exports = {
                 const titleResult = await titleGenerationService.generateTitle(transcript.text);
                 await titleGenerationService.saveTitle(titleResult, recordingId);
                 generatedTitle = titleResult;
-                logger.info(`Generated title: "${titleResult.title}"`);
+                logger.info(`Generated title: '${titleResult.title}'`);
             } catch (titleError) {
-                logger.error(`Failed to generate title:`, {
+                logger.error('Failed to generate title:', {
                     error: titleError.message,
                     stack: titleError.stack,
                     recordingId: recordingId
@@ -215,7 +215,7 @@ module.exports = {
                     await titleGenerationService.saveTitle(fallbackTitle, recordingId);
                     generatedTitle = fallbackTitle;
                 } catch (fallbackError) {
-                    logger.error(`Failed to generate fallback title:`, fallbackError);
+                    logger.error('Failed to generate fallback title:', fallbackError);
                 }
             }
 
@@ -223,9 +223,9 @@ module.exports = {
             try {
                 const summaryResult = await summarizationService.summarizeTranscript(transcriptPath, 'brief');
                 briefSummary = summaryResult.summary;
-                logger.info(`Generated brief summary`);
+                logger.info('Generated brief summary');
             } catch (summaryError) {
-                logger.error(`Failed to generate summary:`, {
+                logger.error('Failed to generate summary:', {
                     error: summaryError.message,
                     stack: summaryError.stack,
                     recordingId: recordingId
@@ -247,6 +247,17 @@ module.exports = {
             await interaction.editReply({ content: finalResponse });
             logger.info(`Completed transcription pipeline for recording ${recordingId}`);
 
+            // Post completion message to public text channel
+            const recordingData = {
+                recordingId,
+                transcriptId: recordingId,
+                title: generatedTitle?.title,
+                briefSummary,
+                transcriptStats: transcript.metadata,
+                expressServer
+            };
+            await this.postRecordingCompletionMessage(interaction, recordingData);
+
         } catch (error) {
             logger.error(`Transcription pipeline failed for ${recordingId}:`, {
                 error: error.message,
@@ -259,7 +270,7 @@ module.exports = {
                     content: this.buildErrorResponse(processedResult, error.message, expressServer)
                 });
             } catch (updateError) {
-                logger.error(`Failed to update failed pipeline:`, {
+                logger.error('Failed to update failed pipeline:', {
                     error: updateError.message,
                     code: updateError.code
                 });
@@ -269,8 +280,96 @@ module.exports = {
             if (recordingResult.tempDir) {
                 const audioProcessor = require('../audio/AudioProcessor');
                 audioProcessor.cleanupTempFiles(recordingResult.tempDir);
-                logger.debug(`Cleaned up temp directory: ${recordingResult.tempDir}`);
+                logger.debug('Cleaned up temp directory:', recordingResult.tempDir);
             }
+        }
+    },
+    // Helper to create web viewer link for transcript
+    createTranscriptViewerLink(transcriptFilename) {
+        const recordingId = transcriptFilename.replace('transcript_', '').replace('.md', '');
+        return `${config.express.baseUrl}/?id=${recordingId}`;
+    },
+
+    async postRecordingCompletionMessage(interaction, recordingData) {
+        try {
+            // Find the text channel associated with the voice channel
+            const voiceChannel = interaction.member?.voice?.channel;
+            if (!voiceChannel) {
+                logger.warn('No voice channel found for recording completion message');
+                return;
+            }
+
+            // Try to find a text channel with similar name or the general channel
+            const guild = interaction.guild;
+            let textChannel = null;
+
+            // First, try to find a text channel with the same name as voice channel
+            textChannel = guild.channels.cache.find(channel =>
+                channel.type === 0 && // TEXT channel type
+                channel.name.toLowerCase() === voiceChannel.name.toLowerCase()
+            );
+
+            // If not found, try to find "general" or similar
+            if (!textChannel) {
+                textChannel = guild.channels.cache.find(channel =>
+                    channel.type === 0 &&
+                    (channel.name.includes('general') || channel.name.includes('chat') || channel.name.includes('main'))
+                );
+            }
+
+            // If still not found, use the first available text channel
+            if (!textChannel) {
+                textChannel = guild.channels.cache.find(channel => channel.type === 0);
+            }
+
+            if (!textChannel) {
+                logger.warn('No suitable text channel found for recording completion message');
+                return;
+            }
+
+            // Create the public completion message
+            const { recordingId, transcriptId, title, briefSummary, transcriptStats, expressServer } = recordingData;
+
+            // Generate URLs
+            const recordingUrl = expressServer.createTemporaryUrl(`${recordingId}.mp3`);
+            const transcriptUrl = expressServer.createTemporaryUrl(`transcript_${transcriptId}.md`);
+            const webViewerUrl = this.createTranscriptViewerLink(`transcript_${transcriptId}.md`);
+            const detailedSummaryUrl = `${config.express.baseUrl}/summary?id=${transcriptId}&type=detailed`;
+
+            // Build the message
+            let message = '🎙️ **Recording Complete!**\n\n';
+
+            if (title) {
+                message += `📝 **"${title}"**\n\n`;
+            }
+
+            if (briefSummary) {
+                // Truncate summary if too long for Discord
+                const maxSummaryLength = 800;
+                const displaySummary = briefSummary.length > maxSummaryLength
+                    ? briefSummary.substring(0, maxSummaryLength) + '...'
+                    : briefSummary;
+                message += `📋 **Summary:**\n${displaySummary}\n\n`;
+            }
+
+            message += '🔗 **Links:**\n';
+            message += `• 🎵 [Audio Recording](${recordingUrl})\n`;
+            message += `• 📄 [Transcript](${webViewerUrl}) | [Download](${transcriptUrl})\n`;
+            message += `• 📊 [Detailed Summary](${detailedSummaryUrl})\n\n`;
+
+            if (transcriptStats) {
+                message += `📈 **Stats:** ${transcriptStats.participants.join(', ')} • ${transcriptStats.transcribedSegments}/${transcriptStats.totalSegments} segments\n\n`;
+            }
+
+            message += '⚠️ *Files expire in 24 hours*';
+
+            // Post the message to the text channel
+            await textChannel.send(message);
+            logger.info(`Posted recording completion message to #${textChannel.name}`);
+
+        } catch (error) {
+            logger.error('Failed to post recording completion message:', error);
+            // Don't throw - this is not critical to the recording process
         }
     },
 

@@ -61,3 +61,4 @@ logs/
 
 # Build artifacts that should be generated, not committed
 # (public/ directory is already ignored above)
+docs/audio_processing_analysis.md
