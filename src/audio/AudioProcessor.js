@@ -12,163 +12,185 @@ class AudioProcessor {
         }
     }
 
-    async processRecording(tempDir, outputFile, cleanupTempFiles = true) {
-        if (!fs.existsSync(tempDir)) {
-            throw new Error(`Temp directory not found: ${tempDir}`);
-        }
-
-        logger.info(`Processing recording segments from: ${tempDir} -> ${outputFile}`);
-
-        // Get all user PCM files
-        const userFiles = fs.readdirSync(tempDir)
-            .filter(file => file.endsWith('.pcm'))
-            .map(file => path.join(tempDir, file));
-
-        if (userFiles.length === 0) {
-            throw new Error('No audio segments found - no one spoke during recording');
-        }
-
-        // Check if files have content
-        const validFiles = userFiles.filter(file => {
-            const stats = fs.statSync(file);
-            return stats.size > 0;
-        });
-
-        if (validFiles.length === 0) {
-            throw new Error('All audio segments are empty - no audio was captured');
-        }
-
-        return new Promise((resolve, reject) => {
-            const startTime = Date.now();
-
-            const ffmpegCommand = ffmpeg();
-
-            // Add each user file as input
-            validFiles.forEach(file => {
-                ffmpegCommand.input(file)
-                    .inputFormat('s16le')
-                    .inputOptions([
-                        '-ac', '2',
-                        '-ar', '48000'
-                    ]);
-            });
-
-            // Mix all inputs together
-            const filterComplex = validFiles.length > 1
-                ? `amix=inputs=${validFiles.length}:duration=longest:dropout_transition=0`
-                : null;
-
-            if (filterComplex) {
-                ffmpegCommand.complexFilter(filterComplex);
-            }
-
-            ffmpegCommand
-                .audioCodec('libmp3lame')
-                .audioBitrate(config.audio.quality)
-                .on('start', (_commandLine) => {
-                    logger.debug('FFmpeg processing started');
-                })
-                .on('end', () => {
-                    const processingTime = Date.now() - startTime;
-                    logger.info(`Processing completed in ${processingTime}ms`);
-
-                    // Get file size
-                    const stats = fs.statSync(outputFile);
-                    const fileSize = stats.size;
-
-                    // Clean up temp files (if requested)
-                    if (cleanupTempFiles) {
-                        this.cleanupTempFiles(tempDir);
-                    }
-
-                    resolve({
-                        outputFile,
-                        processingTime,
-                        fileSize,
-                        segmentCount: validFiles.length
-                    });
-                })
-                .on('error', (err) => {
-                    logger.error('FFmpeg processing error:', err);
-                    reject(new Error(`Audio processing failed: ${err.message}`));
-                })
-                .save(outputFile);
-        });
-    }
-
     async validateFFmpeg() {
         return new Promise((resolve, reject) => {
             ffmpeg.getAvailableFormats((err, formats) => {
                 if (err) {
-                    logger.error('FFmpeg validation failed:', err);
-                    reject(err);
+                    reject(new Error('FFmpeg not found or not working properly'));
                 } else {
-                    logger.info('FFmpeg validation successful');
-                    logger.debug('Available formats:', Object.keys(formats).slice(0, 10));
                     resolve(true);
                 }
             });
         });
     }
 
-    async testProcessingPerformance(durationMinutes = 1) {
-        logger.info(`Testing processing performance for ${durationMinutes} minute recording`);
+    async createMixedRecording(recordingResult) {
+        const { userFiles } = recordingResult;
 
-        // Create a test PCM file with silence
-        const testInput = path.join(config.paths.temp, `test_${durationMinutes}min.pcm`);
-        const testOutput = path.join(config.paths.recordings, `test_${durationMinutes}min.mp3`);
+        if (!userFiles || userFiles.length === 0) {
+            throw new Error('No audio files to process - recording may have been too short or no one spoke');
+        }
 
         try {
-            // Generate test PCM data (silence)
-            const sampleRate = 48000;
-            const channels = 2;
-            const bytesPerSample = 2;
-            const totalSamples = sampleRate * durationMinutes * 60;
-            const bufferSize = totalSamples * channels * bytesPerSample;
+            // Generate output filenames
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const wavFile = path.join(config.paths.temp, `temp_${timestamp}.wav`);
+            const mp3File = path.join(config.paths.recordings, `recording_${timestamp}.mp3`);
 
-            const silence = Buffer.alloc(bufferSize, 0);
-            fs.writeFileSync(testInput, silence);
+            // Step 1: PCM → WAV (intermediate format)
+            if (userFiles.length === 1) {
+                const userFile = userFiles[0];
 
-            const startTime = Date.now();
-            const _result = await this.processRecording(testInput, testOutput);
-            const totalTime = Date.now() - startTime;
+                // Check if PCM file exists and has content
+                if (!fs.existsSync(userFile.filepath)) {
+                    throw new Error(`PCM file not found: ${userFile.filepath}`);
+                }
 
-            logger.info(`Performance test completed: ${durationMinutes}min recording processed in ${totalTime}ms`);
+                const pcmStats = fs.statSync(userFile.filepath);
+                if (pcmStats.size === 0) {
+                    throw new Error(`PCM file is empty: ${userFile.filepath} (0 bytes)`);
+                }
 
-            // Clean up test files
-            if (fs.existsSync(testOutput)) {
-                fs.unlinkSync(testOutput);
+                logger.info(`Processing single PCM file: ${userFile.filepath} (${Math.round(pcmStats.size / 1024)}KB)`);
+                await this.convertPcmToWav(userFile.filepath, wavFile);
+            } else {
+                logger.info(`Mixing ${userFiles.length} PCM files`);
+                await this.mixPcmToWav(userFiles, wavFile);
             }
 
+            // Step 2: WAV → MP3 (final compressed format)
+            await this.convertWavToMp3(wavFile, mp3File);
+
+            // Cleanup intermediate WAV file
+            if (fs.existsSync(wavFile)) {
+                fs.unlinkSync(wavFile);
+            }
+
+            const stats = fs.statSync(mp3File);
+            logger.info(`Created final recording: ${mp3File} (${Math.round(stats.size / 1024)}KB)`);
+
             return {
-                durationMinutes,
-                processingTimeMs: totalTime,
-                ratio: totalTime / (durationMinutes * 60 * 1000)
+                outputFile: mp3File,
+                fileSize: stats.size,
+                participants: userFiles.length
             };
 
         } catch (error) {
-            logger.error('Performance test failed:', error);
+            logger.error(`Audio processing failed: ${error.message}`);
             throw error;
         }
+    }
+
+    async convertPcmToWav(pcmFilePath, outputPath) {
+        // ORIGINAL WORKING FORMAT: 48kHz stereo 16-bit from Opus decoder
+        return new Promise((resolve, reject) => {
+            ffmpeg()
+                .input(pcmFilePath)
+                .inputFormat('s16le')
+                .inputOptions(['-ar', '48000', '-ac', '2'])  // STEREO as original
+                .audioCodec('pcm_s16le')
+                .format('wav')
+                .output(outputPath)
+                .on('end', () => {
+                    logger.debug(`Converted PCM to WAV: ${path.basename(outputPath)}`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    logger.error(`PCM to WAV conversion failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
+    }
+
+    async convertWavToMp3(wavFilePath, outputPath) {
+        // Convert WAV to compressed MP3 format (final step)
+        return new Promise((resolve, reject) => {
+            ffmpeg()
+                .input(wavFilePath)
+                .audioCodec('libmp3lame')
+                .audioBitrate(config.audio.quality || '192k')
+                .audioFrequency(48000)
+                .audioChannels(2)
+                .format('mp3')
+                .output(outputPath)
+                .on('end', () => {
+                    logger.debug(`Converted WAV to MP3: ${path.basename(outputPath)}`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    logger.error(`WAV to MP3 conversion failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
+    }
+
+    async mixPcmToWav(userFiles, outputPath) {
+        // Mix multiple PCM files into a single WAV file (intermediate step)
+        return new Promise((resolve, reject) => {
+            const command = ffmpeg();
+
+            // Add each user's PCM file as input with Discord format
+            for (const userFile of userFiles) {
+                command.input(userFile.filepath)
+                    .inputFormat('s16le')
+                    .inputOptions(['-ar', '48000', '-ac', '2']);  // STEREO Discord format
+            }
+
+            // Create amix filter for combining all inputs
+            const filterChain = userFiles.length > 1
+                ? `amix=inputs=${userFiles.length}:duration=longest:dropout_transition=0`
+                : 'anull';
+
+            command
+                .complexFilter([filterChain])
+                .audioCodec('pcm_s16le')
+                .audioFrequency(48000)
+                .audioChannels(2)
+                .format('wav')
+                .output(outputPath)
+                .on('end', () => {
+                    logger.debug(`Mixed ${userFiles.length} PCM streams into WAV: ${path.basename(outputPath)}`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    logger.error(`PCM to WAV mixing failed: ${error.message}`);
+                    reject(error);
+                })
+                .run();
+        });
     }
 
     cleanupTempFiles(tempDir) {
         try {
             if (fs.existsSync(tempDir)) {
                 const files = fs.readdirSync(tempDir);
-                files.forEach(file => {
+                for (const file of files) {
                     const filePath = path.join(tempDir, file);
                     fs.unlinkSync(filePath);
-                    logger.debug(`Cleaned up temp file: ${filePath}`);
-                });
+                }
                 fs.rmdirSync(tempDir);
                 logger.info(`Cleaned up temp directory: ${tempDir}`);
             }
         } catch (error) {
-            logger.error('Error cleaning up temp files:', error);
+            logger.error(`Failed to cleanup temp directory ${tempDir}: ${error.message}`);
         }
     }
 
+    getFileInfo(filePath) {
+        if (!fs.existsSync(filePath)) {
+            return null;
+        }
+
+        const stats = fs.statSync(filePath);
+        return {
+            path: filePath,
+            size: stats.size,
+            created: stats.birthtime,
+            modified: stats.mtime
+        };
+    }
 }
 
 module.exports = new AudioProcessor();
