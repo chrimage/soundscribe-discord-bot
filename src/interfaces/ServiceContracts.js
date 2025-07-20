@@ -151,35 +151,6 @@ class VoiceRecorderContract {
     }
 }
 
-class BackgroundJobManagerContract {
-    /**
-     * Queue a transcription job
-     * @param {Object} jobData - Job data including recording info
-     * @returns {number} Job ID
-     */
-    queueTranscription(jobData) {
-        throw new Error('Method must be implemented by BackgroundJobManager');
-    }
-
-    /**
-     * Process a transcription job
-     * @param {number} jobId - Job ID
-     * @param {Object} jobData - Job data
-     * @returns {Promise<void>}
-     */
-    async processTranscription(jobId, jobData) {
-        throw new Error('Method must be implemented by BackgroundJobManager');
-    }
-
-    /**
-     * Get job status
-     * @param {number} jobId - Job ID
-     * @returns {Object|null} Job status or null if not found
-     */
-    getJobStatus(jobId) {
-        throw new Error('Method must be implemented by BackgroundJobManager');
-    }
-}
 
 /**
  * Interface validation helper
@@ -217,8 +188,7 @@ class ContractValidator {
         const validations = [
             { service: services.audioProcessor, contract: AudioProcessorContract, name: 'AudioProcessor' },
             { service: services.transcriptionService, contract: TranscriptionServiceContract, name: 'TranscriptionService' },
-            { service: services.voiceRecorder, contract: VoiceRecorderContract, name: 'VoiceRecorder' },
-            { service: services.backgroundJobManager, contract: BackgroundJobManagerContract, name: 'BackgroundJobManager' }
+            { service: services.voiceRecorder, contract: VoiceRecorderContract, name: 'VoiceRecorder' }
         ];
 
         for (const { service, contract, name } of validations) {
@@ -233,6 +203,5 @@ module.exports = {
     AudioProcessorContract,
     TranscriptionServiceContract,
     VoiceRecorderContract,
-    BackgroundJobManagerContract,
     ContractValidator
 };

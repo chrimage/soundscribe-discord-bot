@@ -75,25 +75,39 @@ class TitleGenerationService {
 
         const lines = transcriptContent.split('\n');
         const conversationLines = [];
-        let inConversation = false;
+        let pastHeader = false;
 
         for (const line of lines) {
-            // Start collecting after the separator line
-            if (line.trim() === '---') {
-                inConversation = true;
+            const trimmedLine = line.trim();
+            
+            // Skip empty lines
+            if (!trimmedLine) continue;
+            
+            // Skip header line
+            if (trimmedLine.startsWith('# Transcript')) {
+                pastHeader = true;
                 continue;
             }
+            
+            // Only process lines after the header
+            if (!pastHeader) continue;
 
-            if (inConversation && line.trim()) {
-                // Skip speaker lines that start with **[timestamp]
-                if (line.startsWith('**[')) {
-                    const speakerMatch = line.match(/\*\*\[.*?\]\s*(.+?)(?:\s*\([\d.]+%\))?\*\*:/);
-                    if (speakerMatch) {
-                        conversationLines.push(`${speakerMatch[1]}:`);
-                    }
-                } else if (!line.startsWith('**') && !line.startsWith('#')) {
-                    // This is the actual speech content
-                    conversationLines.push(line.trim());
+            // Parse current format: **username** _(timestamp)_: content
+            if (trimmedLine.startsWith('**') && trimmedLine.includes('**:')) {
+                const speakerMatch = trimmedLine.match(/^\*\*(.+?)\*\*\s*_\([\d:]+\)_:\s*(.+)$/);
+                if (speakerMatch) {
+                    const speaker = speakerMatch[1];
+                    const content = speakerMatch[2];
+                    conversationLines.push(`${speaker}: ${content}`);
+                }
+            }
+            // Also handle legacy format: **[timestamp] username**: content  
+            else if (trimmedLine.startsWith('**[')) {
+                const legacyMatch = trimmedLine.match(/^\*\*\[.*?\]\s*(.+?)(?:\s*\([\d.]+%\))?\*\*:\s*(.+)$/);
+                if (legacyMatch) {
+                    const speaker = legacyMatch[1];
+                    const content = legacyMatch[2];
+                    conversationLines.push(`${speaker}: ${content}`);
                 }
             }
         }

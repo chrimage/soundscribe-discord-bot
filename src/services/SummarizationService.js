@@ -55,7 +55,12 @@ class SummarizationService {
             };
 
         } catch (error) {
-            logger.error(`Failed to summarize transcript ${transcriptPath}:`, error);
+            logger.error(`Failed to summarize transcript ${transcriptPath}:`, {
+                error: error.message,
+                stack: error.stack,
+                transcriptPath: transcriptPath,
+                summaryType: summaryType
+            });
             throw error;
         }
     }

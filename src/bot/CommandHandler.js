@@ -8,7 +8,6 @@ const fileManager = require('../utils/fileManager');
 const transcriptionService = require('../services/TranscriptionService');
 const summarizationService = require('../services/SummarizationService');
 const titleGenerationService = require('../services/TitleGenerationService');
-const BackgroundJobManager = require('./BackgroundJobManager');
 const { _COMMANDS, _ERROR_MESSAGES } = require('../constants');
 const { loadCommands } = require('../commands');
 const ErrorHandler = require('../utils/ErrorHandler');
@@ -17,7 +16,6 @@ class CommandHandler {
     constructor(client, expressServer) {
         this.client = client;
         this.expressServer = expressServer;
-        this.backgroundJobManager = new BackgroundJobManager(expressServer);
         this.commands = new Map();
         this.setupCommands();
         this.setupAutocomplete();
@@ -60,8 +58,7 @@ class CommandHandler {
             transcriptionService,
             titleGenerationService,
             summarizationService,
-            expressServer: this.expressServer,
-            backgroundJobManager: this.backgroundJobManager
+            expressServer: this.expressServer
         };
         
         const externalCommands = loadCommands(dependencies);

@@ -175,7 +175,12 @@ class ExpressServer {
                         });
                     })
                     .catch(error => {
-                        logger.error('Error generating summary:', error);
+                        logger.error('Error generating summary:', {
+                            error: error.message,
+                            stack: error.stack,
+                            recordingId: recordingId,
+                            summaryType: summaryType
+                        });
                         res.status(500).json({ error: 'Failed to generate summary' });
                     });
             } catch (error) {

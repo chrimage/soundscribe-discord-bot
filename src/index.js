@@ -32,8 +32,7 @@ class SoundScribeBot {
             logger.info('Validating service contracts...');
             ContractValidator.validateCoreServices({
                 audioProcessor,
-                voiceRecorder,
-                backgroundJobManager: this.commandHandler?.backgroundJobManager
+                voiceRecorder
             });
             logger.info('Service contracts validated');
 
