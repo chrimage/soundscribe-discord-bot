@@ -6,6 +6,7 @@ const ExpressServer = require('./server/ExpressServer');
 const audioProcessor = require('./audio/AudioProcessor');
 const _fileManager = require('./utils/fileManager');
 const voiceRecorder = require('./audio/VoiceRecorder');
+const { ContractValidator } = require('./interfaces/ServiceContracts');
 
 class SoundScribeBot {
     constructor() {
@@ -27,6 +28,15 @@ class SoundScribeBot {
 
     async start() {
         try {
+            // Validate service contracts
+            logger.info('Validating service contracts...');
+            ContractValidator.validateCoreServices({
+                audioProcessor,
+                voiceRecorder,
+                backgroundJobManager: this.commandHandler?.backgroundJobManager
+            });
+            logger.info('Service contracts validated');
+
             // Validate FFmpeg
             logger.info('Validating FFmpeg installation...');
             await audioProcessor.validateFFmpeg();

@@ -32,12 +32,12 @@ class AudioProcessor {
         }
 
         try {
-
-            // Generate output filename - MP3 for compression
+            // Generate output filenames
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const outputFile = path.join(config.paths.recordings, `recording_${timestamp}.mp3`);
+            const wavFile = path.join(config.paths.temp, `temp_${timestamp}.wav`);
+            const mp3File = path.join(config.paths.recordings, `recording_${timestamp}.mp3`);
 
-            // If only one user, convert PCM to WAV
+            // Step 1: PCM → WAV (intermediate format)
             if (userFiles.length === 1) {
                 const userFile = userFiles[0];
                 
@@ -51,29 +51,26 @@ class AudioProcessor {
                     throw new Error(`PCM file is empty: ${userFile.filepath} (0 bytes)`);
                 }
                 
-                logger.info(`Converting PCM file: ${userFile.filepath} (${Math.round(pcmStats.size / 1024)}KB)`);
-                
-                // Convert PCM file to MP3 for compression
-                await this.convertPcmToMp3(userFile.filepath, outputFile);
-
-                const stats = fs.statSync(outputFile);
-                logger.info(`Created MP3 from PCM: ${outputFile} (${Math.round(stats.size / 1024)}KB)`);
-
-                return {
-                    outputFile: outputFile,
-                    fileSize: stats.size,
-                    participants: userFiles.length
-                };
+                logger.info(`Processing single PCM file: ${userFile.filepath} (${Math.round(pcmStats.size / 1024)}KB)`);
+                await this.convertPcmToWav(userFile.filepath, wavFile);
+            } else {
+                logger.info(`Mixing ${userFiles.length} PCM files`);
+                await this.mixPcmToWav(userFiles, wavFile);
             }
 
-            // Multiple users - create mixed audio as MP3 from PCM files
-            await this.mixUserAudioFilesToMp3(userFiles, outputFile);
+            // Step 2: WAV → MP3 (final compressed format)
+            await this.convertWavToMp3(wavFile, mp3File);
 
-            const stats = fs.statSync(outputFile);
-            logger.info(`Created mixed recording: ${outputFile} (${Math.round(stats.size / 1024)}KB)`);
+            // Cleanup intermediate WAV file
+            if (fs.existsSync(wavFile)) {
+                fs.unlinkSync(wavFile);
+            }
+
+            const stats = fs.statSync(mp3File);
+            logger.info(`Created final recording: ${mp3File} (${Math.round(stats.size / 1024)}KB)`);
 
             return {
-                outputFile,
+                outputFile: mp3File,
                 fileSize: stats.size,
                 participants: userFiles.length
             };
@@ -106,125 +103,31 @@ class AudioProcessor {
         });
     }
 
-    async convertPcmToMp3(pcmFilePath, outputPath) {
-        // Convert PCM to compressed MP3 format
+    async convertWavToMp3(wavFilePath, outputPath) {
+        // Convert WAV to compressed MP3 format (final step)
         return new Promise((resolve, reject) => {
             ffmpeg()
-                .input(pcmFilePath)
-                .inputFormat('s16le')
-                .inputOptions(['-ar', '48000', '-ac', '2'])  // STEREO Discord format
+                .input(wavFilePath)
                 .audioCodec('libmp3lame')
-                .audioBitrate(config.audio.quality || '192k')  // Use config quality
+                .audioBitrate(config.audio.quality || '192k')
                 .audioFrequency(48000)
                 .audioChannels(2)
                 .format('mp3')
                 .output(outputPath)
                 .on('end', () => {
-                    logger.debug(`Converted PCM to MP3: ${path.basename(outputPath)}`);
+                    logger.debug(`Converted WAV to MP3: ${path.basename(outputPath)}`);
                     resolve();
                 })
                 .on('error', (error) => {
-                    logger.error(`PCM to MP3 conversion failed: ${error.message}`);
+                    logger.error(`WAV to MP3 conversion failed: ${error.message}`);
                     reject(error);
                 })
                 .run();
         });
     }
 
-    // Removed complex format testing - keeping it simple
-
-    async decodeOpusToWav(opusFilePath, outputPath) {
-        // Only used for transcription - decode Opus to WAV
-        return new Promise((resolve, reject) => {
-            ffmpeg()
-                .input(opusFilePath)
-                .audioCodec('pcm_s16le')
-                .audioFrequency(48000)
-                .audioChannels(1) // Mono for transcription
-                .format('wav')
-                .output(outputPath)
-                .on('end', () => {
-                    logger.debug(`Decoded Opus to WAV: ${path.basename(outputPath)}`);
-                    resolve();
-                })
-                .on('error', (error) => {
-                    logger.error(`Opus to WAV decoding failed: ${error.message}`);
-                    reject(error);
-                })
-                .run();
-        });
-    }
-
-    async mixOpusFilesToWav(userFiles, outputPath) {
-        // Mix Opus files into a single WAV file
-        return new Promise((resolve, reject) => {
-            const command = ffmpeg();
-
-            // Add each user's Opus file as input
-            for (const userFile of userFiles) {
-                command.input(userFile.filepath);
-            }
-
-            // Create amix filter for combining all inputs
-            const filterChain = userFiles.length > 1
-                ? `amix=inputs=${userFiles.length}:duration=longest:dropout_transition=2`
-                : 'anull';
-
-            command
-                .complexFilter([filterChain])
-                .audioCodec('pcm_s16le')  // Output as uncompressed WAV
-                .audioFrequency(48000)    // Match Discord's sample rate
-                .audioChannels(1)         // Mono output
-                .format('wav')
-                .output(outputPath)
-                .on('end', () => {
-                    logger.debug(`Mixed ${userFiles.length} Opus streams into WAV: ${path.basename(outputPath)}`);
-                    resolve();
-                })
-                .on('error', (error) => {
-                    logger.error(`Opus WAV mixing failed: ${error.message}`);
-                    reject(error);
-                })
-                .run();
-        });
-    }
-
-    async mixUserAudioFilesToWav(userFiles, outputPath) {
-        // ORIGINAL WORKING FORMAT: 48kHz stereo 16-bit from Opus decoder
-        return new Promise((resolve, reject) => {
-            const command = ffmpeg();
-
-            // Add each user's PCM file as input with ORIGINAL format
-            for (const userFile of userFiles) {
-                command.input(userFile.filepath)
-                    .inputFormat('s16le')
-                    .inputOptions(['-ar', '48000', '-ac', '2']);  // STEREO as original
-            }
-
-            // Create amix filter for combining all inputs
-            const filterChain = userFiles.length > 1
-                ? `amix=inputs=${userFiles.length}:duration=longest:dropout_transition=0`  // Original settings
-                : 'anull';
-
-            command
-                .complexFilter([filterChain])
-                .audioCodec('pcm_s16le')  // Keep as uncompressed PCM
-                .format('wav')
-                .output(outputPath)
-                .on('end', () => {
-                    logger.debug(`Mixed ${userFiles.length} PCM streams into WAV: ${path.basename(outputPath)}`);
-                    resolve();
-                })
-                .on('error', (error) => {
-                    logger.error(`PCM WAV mixing failed: ${error.message}`);
-                    reject(error);
-                })
-                .run();
-        });
-    }
-
-    async mixUserAudioFilesToMp3(userFiles, outputPath) {
-        // Mix multiple PCM files into compressed MP3
+    async mixPcmToWav(userFiles, outputPath) {
+        // Mix multiple PCM files into a single WAV file (intermediate step)
         return new Promise((resolve, reject) => {
             const command = ffmpeg();
 
@@ -242,122 +145,20 @@ class AudioProcessor {
 
             command
                 .complexFilter([filterChain])
-                .audioCodec('libmp3lame')
-                .audioBitrate(config.audio.quality || '192k')
+                .audioCodec('pcm_s16le')
                 .audioFrequency(48000)
                 .audioChannels(2)
-                .format('mp3')
+                .format('wav')
                 .output(outputPath)
                 .on('end', () => {
-                    logger.debug(`Mixed ${userFiles.length} PCM streams into MP3: ${path.basename(outputPath)}`);
+                    logger.debug(`Mixed ${userFiles.length} PCM streams into WAV: ${path.basename(outputPath)}`);
                     resolve();
                 })
                 .on('error', (error) => {
-                    logger.error(`PCM MP3 mixing failed: ${error.message}`);
+                    logger.error(`PCM to WAV mixing failed: ${error.message}`);
                     reject(error);
                 })
                 .run();
-        });
-    }
-
-    async mixUserAudioFiles(userFiles, outputPath) {
-        // Keep the old OGG method for fallback
-        return new Promise((resolve, reject) => {
-            const command = ffmpeg();
-
-            for (const userFile of userFiles) {
-                command.input(userFile.filepath)
-                    .inputFormat('s16le')
-                    .inputOptions(['-ar', '48000', '-ac', '2']);
-            }
-
-            const filterChain = userFiles.length > 1
-                ? `amix=inputs=${userFiles.length}:duration=longest:dropout_transition=2`
-                : 'anull';
-
-            command
-                .complexFilter([filterChain])
-                .audioCodec('libvorbis')
-                .audioBitrate('128k')
-                .format('ogg')
-                .output(outputPath)
-                .on('end', () => {
-                    logger.debug(`Mixed ${userFiles.length} PCM streams into: ${path.basename(outputPath)}`);
-                    resolve();
-                })
-                .on('error', (error) => {
-                    logger.error(`PCM mixing failed: ${error.message}`);
-                    reject(error);
-                })
-                .run();
-        });
-    }
-
-    async convertOpusToWav(opusFilePath, outputPath = null) {
-        return new Promise((resolve, reject) => {
-            const wavFilePath = outputPath || opusFilePath.replace('.opus', '.wav');
-
-            // Try multiple approaches to handle Discord.js Opus format
-            const tryConversions = [
-                // Approach 1: Treat as raw Opus stream
-                () => ffmpeg()
-                    .input(opusFilePath)
-                    .inputFormat('s16le')  // Try as raw PCM first
-                    .inputOptions(['-ar', '48000', '-ac', '2'])
-                    .audioCodec('pcm_s16le')
-                    .audioFrequency(48000)
-                    .audioChannels(1)
-                    .format('wav')
-                    .output(wavFilePath),
-                
-                // Approach 2: Treat as OGG Opus
-                () => ffmpeg()
-                    .input(opusFilePath)
-                    .inputFormat('ogg')
-                    .audioCodec('pcm_s16le')
-                    .audioFrequency(48000)
-                    .audioChannels(1)
-                    .format('wav')
-                    .output(wavFilePath),
-                
-                // Approach 3: No input format specified (let FFmpeg detect)
-                () => ffmpeg()
-                    .input(opusFilePath)
-                    .audioCodec('pcm_s16le')
-                    .audioFrequency(48000)
-                    .audioChannels(1)
-                    .format('wav')
-                    .output(wavFilePath)
-            ];
-
-            let currentApproach = 0;
-            
-            const tryNext = () => {
-                if (currentApproach >= tryConversions.length) {
-                    reject(new Error('All Opus conversion approaches failed'));
-                    return;
-                }
-                
-                const command = tryConversions[currentApproach]();
-                currentApproach++;
-                
-                command
-                    .on('end', () => {
-                        logger.debug(`Converted Opus to WAV (approach ${currentApproach}): ${path.basename(wavFilePath)}`);
-                        resolve(wavFilePath);
-                    })
-                    .on('error', (error) => {
-                        logger.warn(`Opus conversion approach ${currentApproach} failed: ${error.message}`);
-                        if (currentApproach < tryConversions.length) {
-                            tryNext();
-                        } else {
-                            reject(error);
-                        }
-                    })
-                    .run();
-            };
-            
-            tryNext();
         });
     }
 

@@ -1,5 +1,6 @@
 const { WebhookClient } = require('discord.js');
 const path = require('path');
+const fs = require('fs');
 const logger = require('../utils/logger');
 const transcriptionService = require('../services/TranscriptionService');
 const summarizationService = require('../services/SummarizationService');
@@ -11,21 +12,88 @@ class BackgroundJobManager {
         this.expressServer = expressServer;
         this.jobs = new Map();
         this.jobCounter = 0;
+        this.jobsFile = path.join(config.paths.temp, 'background_jobs.json');
+        
+        // Load existing jobs on startup
+        this.loadJobs();
+        
+        // Save jobs periodically
+        this.setupPeriodicSave();
+    }
+
+    loadJobs() {
+        try {
+            if (fs.existsSync(this.jobsFile)) {
+                const data = fs.readFileSync(this.jobsFile, 'utf8');
+                const jobsData = JSON.parse(data);
+                
+                this.jobCounter = jobsData.counter || 0;
+                
+                // Restore jobs but mark incomplete ones as failed
+                for (const [jobId, jobData] of Object.entries(jobsData.jobs || {})) {
+                    if (jobData.status === 'processing' || jobData.status === 'queued') {
+                        jobData.status = 'failed';
+                        jobData.error = 'Job interrupted by restart';
+                    }
+                    this.jobs.set(parseInt(jobId), jobData);
+                }
+                
+                logger.info(`Loaded ${this.jobs.size} persisted background jobs`);
+            }
+        } catch (error) {
+            logger.error('Failed to load persisted jobs:', error);
+        }
+    }
+
+    saveJobs() {
+        try {
+            const jobsData = {
+                counter: this.jobCounter,
+                jobs: Object.fromEntries(this.jobs),
+                savedAt: new Date().toISOString()
+            };
+            
+            fs.writeFileSync(this.jobsFile, JSON.stringify(jobsData, null, 2));
+        } catch (error) {
+            logger.error('Failed to save jobs:', error);
+        }
+    }
+
+    setupPeriodicSave() {
+        // Save jobs every 30 seconds
+        setInterval(() => {
+            if (this.jobs.size > 0) {
+                this.saveJobs();
+            }
+        }, 30000);
     }
 
     queueTranscription(jobData) {
         const jobId = ++this.jobCounter;
-        this.jobs.set(jobId, { ...jobData, status: 'queued', startTime: Date.now() });
+        const job = { ...jobData, status: 'queued', startTime: Date.now() };
+        this.jobs.set(jobId, job);
+        
+        // Save immediately for new jobs
+        this.saveJobs();
         
         logger.info(`Queued transcription job ${jobId} for recording ${jobData.recordingId}`);
         
         // Process in background (don't await)
         this.processTranscription(jobId, jobData).catch(error => {
             logger.error(`Background transcription job ${jobId} failed:`, error);
-            this.jobs.delete(jobId);
+            const job = this.jobs.get(jobId);
+            if (job) {
+                job.status = 'failed';
+                job.error = error.message;
+                this.saveJobs();
+            }
         });
         
         return jobId;
+    }
+
+    getJobStatus(jobId) {
+        return this.jobs.get(jobId) || null;
     }
 
     async processTranscription(jobId, { recordingData, processedResult, interactionToken, webhookUrl, recordingId }) {

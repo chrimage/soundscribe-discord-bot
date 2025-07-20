@@ -11,6 +11,7 @@ const titleGenerationService = require('../services/TitleGenerationService');
 const BackgroundJobManager = require('./BackgroundJobManager');
 const { _COMMANDS, _ERROR_MESSAGES } = require('../constants');
 const { loadCommands } = require('../commands');
+const ErrorHandler = require('../utils/ErrorHandler');
 
 class CommandHandler {
     constructor(client, expressServer) {
@@ -65,10 +66,15 @@ class CommandHandler {
         
         const externalCommands = loadCommands(dependencies);
         for (const [name, command] of externalCommands) {
-            this.commands.set(name, command);
+            // Wrap each command with error handling
+            const wrappedCommand = {
+                data: command.data,
+                execute: ErrorHandler.wrapCommand(command.execute, name)
+            };
+            this.commands.set(name, wrappedCommand);
         }
 
-        // All commands are now externally loaded
+        logger.info(`Loaded ${this.commands.size} commands with error handling`);
     }
 
     async registerCommands() {
@@ -128,23 +134,8 @@ class CommandHandler {
             }
         }
 
-        try {
-            await command.execute(interaction);
-        } catch (error) {
-            logger.error(`Error executing command ${interaction.commandName}:`, error);
-
-            const response = { content: '❌ An error occurred while executing this command.', ephemeral: true };
-
-            try {
-                if (interaction.deferred || interaction.replied) {
-                    await interaction.editReply(response);
-                } else {
-                    await interaction.reply(response);
-                }
-            } catch (interactionError) {
-                logger.error('Failed to respond to interaction (may have timed out):', interactionError);
-            }
-        }
+        // Execute command (error handling is now done by ErrorHandler wrapper)
+        await command.execute(interaction);
     }
 
     async postRecordingCompletionMessage(interaction, recordingData) {

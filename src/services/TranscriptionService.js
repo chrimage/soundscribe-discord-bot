@@ -1,9 +1,9 @@
 const fs = require('fs');
 const FormData = require('form-data');
 const axios = require('axios');
-const ffmpeg = require('fluent-ffmpeg');
 const config = require('../config');
 const logger = require('../utils/logger');
+const audioProcessor = require('../audio/AudioProcessor');
 
 class TranscriptionService {
     constructor() {
@@ -201,30 +201,11 @@ class TranscriptionService {
         return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     }
 
-    // Convert PCM to WAV for transcription
+    // Convert PCM to WAV for transcription using standardized pipeline
     async convertPcmToWav(pcmFilePath) {
-        return new Promise((resolve, reject) => {
-            const wavFilePath = pcmFilePath.replace('.pcm', '.wav');
-
-            ffmpeg()
-                .input(pcmFilePath)
-                .inputFormat('s16le')
-                .inputOptions([
-                    '-ar 48000',
-                    '-ac 2'
-                ])
-                .audioCodec('pcm_s16le')
-                .format('wav')
-                .output(wavFilePath)
-                .on('end', () => {
-                    resolve(wavFilePath);
-                })
-                .on('error', (error) => {
-                    logger.error(`PCM to WAV conversion failed: ${error.message}`);
-                    reject(error);
-                })
-                .run();
-        });
+        const wavFilePath = pcmFilePath.replace('.pcm', '.wav');
+        await audioProcessor.convertPcmToWav(pcmFilePath, wavFilePath);
+        return wavFilePath;
     }
 
     // For backward compatibility - transcribe full user files
@@ -264,6 +245,75 @@ class TranscriptionService {
         }
 
         return transcripts;
+    }
+
+    // Legacy method for backward compatibility with transcribe command
+    async transcribeSegments(audioSources) {
+        logger.info(`Starting transcription of ${audioSources.length} audio sources`);
+        
+        const transcriptionResults = [];
+
+        for (const source of audioSources) {
+            try {
+                logger.info(`Transcribing source ${source.segmentId || source.userId} for ${source.displayName || source.username}`);
+
+                // Convert to appropriate format for transcription
+                let audioFile = source.filename;
+                let needsCleanup = false;
+
+                // If it's a PCM file, convert to WAV first
+                if (source.filename.endsWith('.pcm')) {
+                    audioFile = await this.convertPcmToWav(source.filename);
+                    needsCleanup = true;
+                }
+
+                // Check file size and skip if too large/small
+                const fileStats = fs.statSync(audioFile);
+                if (fileStats.size > 25000000) { // 25MB limit
+                    logger.warn(`Audio file too large (${fileStats.size} bytes), skipping`);
+                    transcriptionResults.push({
+                        ...source,
+                        transcription: '[Audio file too large for transcription]',
+                        error: 'FILE_TOO_LARGE'
+                    });
+                    continue;
+                }
+
+                if (fileStats.size < 1000) { // 1KB minimum
+                    logger.debug(`Audio file too small (${fileStats.size} bytes), skipping`);
+                    transcriptionResults.push({
+                        ...source,
+                        transcription: '[Audio file too small]',
+                        error: 'FILE_TOO_SMALL'
+                    });
+                    continue;
+                }
+
+                // Transcribe the audio
+                const transcription = await this.transcribeAudioFile(audioFile, source.displayName || source.username);
+
+                transcriptionResults.push({
+                    ...source,
+                    transcription: transcription || '[No transcription generated]',
+                    success: !!transcription
+                });
+
+                // Clean up temporary WAV file if created
+                if (needsCleanup && fs.existsSync(audioFile)) {
+                    fs.unlinkSync(audioFile);
+                }
+
+            } catch (error) {
+                logger.error(`Error transcribing segment for ${source.displayName || source.username}:`, error);
+                transcriptionResults.push({
+                    ...source,
+                    transcription: '[Transcription failed]',
+                    error: error.message
+                });
+            }
+        }
+
+        return transcriptionResults;
     }
 }
 
