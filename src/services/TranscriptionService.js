@@ -63,7 +63,12 @@ class TranscriptionService {
                 }
 
             } catch (error) {
-                logger.error(`Failed to transcribe segment for ${segment.username}:`, error);
+                logger.error(`Failed to transcribe segment for ${segment.username}:`, {
+                    error: error.message,
+                    stack: error.stack,
+                    segmentId: segment.segmentId,
+                    userId: segment.userId
+                });
                 // Continue with other segments
             }
         }
@@ -240,7 +245,11 @@ class TranscriptionService {
                 }
 
             } catch (error) {
-                logger.error(`Failed to transcribe full file for ${userFile.username}:`, error);
+                logger.error(`Failed to transcribe full file for ${userFile.username}:`, {
+                    error: error.message,
+                    stack: error.stack,
+                    filePath: userFile.filepath
+                });
             }
         }
 
@@ -304,7 +313,11 @@ class TranscriptionService {
                 }
 
             } catch (error) {
-                logger.error(`Error transcribing segment for ${source.displayName || source.username}:`, error);
+                logger.error(`Error transcribing segment for ${source.displayName || source.username}:`, {
+                    error: error.message,
+                    stack: error.stack,
+                    sourceFile: source.filename
+                });
                 transcriptionResults.push({
                     ...source,
                     transcription: '[Transcription failed]',

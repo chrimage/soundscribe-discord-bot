@@ -144,7 +144,11 @@ class BackgroundJobManager {
                 logger.info(`Generated brief summary for job ${jobId}`);
 
             } catch (titleError) {
-                logger.error(`Failed to generate title/summary for job ${jobId}:`, titleError);
+                logger.error(`Failed to generate title/summary for job ${jobId}:`, {
+                    error: titleError.message,
+                    stack: titleError.stack,
+                    jobId: jobId
+                });
                 // Generate fallback title
                 try {
                     const fallbackTitle = titleGenerationService.generateFallbackTitle(recordingId);
@@ -174,7 +178,7 @@ class BackgroundJobManager {
             );
 
             // Final update with complete results
-            await webhook.editMessage(interactionToken, { content: finalResponse });
+            await webhook.editMessage('@original', { content: finalResponse });
 
             job.status = 'completed';
             job.completedTime = Date.now();
@@ -190,7 +194,7 @@ class BackgroundJobManager {
 
             try {
                 const webhook = new WebhookClient({ url: webhookUrl });
-                await webhook.editMessage(interactionToken, {
+                await webhook.editMessage('@original', {
                     content: this.buildErrorResponse(processedResult, error.message)
                 });
             } catch (webhookError) {
@@ -204,7 +208,8 @@ class BackgroundJobManager {
 
     async updateProgress(webhook, interactionToken, content) {
         try {
-            await webhook.editMessage(interactionToken, { content });
+            // Use '@original' to edit the original interaction response
+            await webhook.editMessage('@original', { content });
         } catch (error) {
             logger.warn('Failed to update job progress:', error.message);
         }
